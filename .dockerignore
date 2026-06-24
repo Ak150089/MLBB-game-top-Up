@@ -1,0 +1,13 @@
+node_modules
+dist
+.manus-logs
+.manus
+*.log
+.env
+.env.*
+!.env.example
+.git
+.gitignore
+README.md
+todo.md
+references/
