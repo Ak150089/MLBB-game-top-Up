@@ -91,6 +91,7 @@ export const appRouter = router({
           gameUserId: z.string().max(120).optional(),
           gameServerId: z.string().max(120).optional(),
           paymentMethod: z.string().max(60).optional(),
+          promoCode: z.string().trim().max(40).optional(),
           // base64 data URL of the receipt image
           receiptDataUrl: z.string().optional(),
         }),
@@ -113,11 +114,42 @@ export const appRouter = router({
 
         const payByBalance = input.paymentMethod === "balance";
 
+        // ---- Promo code validation + discount ----
+        let discountKs = 0;
+        let appliedPromoId: number | null = null;
+        if (input.promoCode) {
+          const code = input.promoCode.trim().toUpperCase();
+          const promo = await db.getPromoByCode(code);
+          if (!promo || !promo.isActive) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "Promo code မမှန်ပါ" });
+          }
+          if (promo.expiresAt && new Date(promo.expiresAt) < new Date()) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "Promo code သက်တမ်းကုန်သွားပါပြီ" });
+          }
+          if (promo.maxUses != null && promo.usedCount >= promo.maxUses) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "Promo code အသုံးပြုခွင့် ပြည့်သွားပါပြီ" });
+          }
+          if (promo.minOrderKs != null && pkg.priceKs < promo.minOrderKs) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "Order amount နည်းနေပါသည်" });
+          }
+          const used = await db.countUserRedemptions(promo.id, ctx.user.id);
+          if (used >= promo.perUserLimit) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "ဤ promo code ကို သုံးပြီးသား ဖြစ်ပါသည်" });
+          }
+          discountKs = promo.discountType === "percent"
+            ? Math.floor((pkg.priceKs * promo.discountValue) / 100)
+            : promo.discountValue;
+          if (discountKs > pkg.priceKs) discountKs = pkg.priceKs;
+          appliedPromoId = promo.id;
+        }
+        const finalKs = pkg.priceKs - discountKs;
+
+
         // For balance payments, debit the prepaid wallet up-front and mark the
         // order processing immediately (no receipt / manual approval needed).
         if (payByBalance) {
           const bal = await db.getUserBalance(ctx.user.id);
-          if (bal < pkg.priceKs) {
+          if (bal < finalKs) {
             throw new TRPCError({ code: "BAD_REQUEST", message: "Insufficient balance" });
           }
         }
@@ -136,7 +168,7 @@ export const appRouter = router({
           packageId: pkg.id,
           productName: product.name,
           packageLabel: pkg.label,
-          totalPriceKs: pkg.priceKs,
+          totalPriceKs: finalKs,
           gameUserId: input.gameUserId ?? null,
           gameServerId: input.gameServerId ?? null,
           paymentMethod: input.paymentMethod ?? null,
@@ -149,7 +181,7 @@ export const appRouter = router({
           // Deduct from balance and write a ledger entry tied to this order.
           await db.adjustBalance(
             ctx.user.id,
-            -pkg.priceKs,
+            -finalKs,
             "topup",
             `Top-up: ${product.name} ${pkg.label}`,
             res.id,
@@ -157,15 +189,321 @@ export const appRouter = router({
         }
 
         notifyOwner({
-          title: "New top-up order",
-          content: `${product.name} — ${pkg.label} (${pkg.priceKs.toLocaleString()} Ks) by ${ctx.user.name ?? "user #" + ctx.user.id}${payByBalance ? " [paid by balance]" : ""}`,
+          title: "🛒 Order အသစ်!",
+          content: `📦 ${product.name} — ${pkg.label}\n💰 ${pkg.priceKs.toLocaleString()} Ks\n👤 ${ctx.user.name ?? "user #" + ctx.user.id}${ctx.user.email ? " (" + ctx.user.email + ")" : ""}${input.gameUserId ? "\n🎮 ID: " + input.gameUserId + (input.gameServerId ? " (" + input.gameServerId + ")" : "") : ""}${payByBalance ? "\n💳 Paid by balance" : ""}\n🕐 ${new Date().toLocaleString("en-GB", { timeZone: "Asia/Yangon" })}`,
         }).catch(() => {});
+
+        if (appliedPromoId != null) {
+          await db.recordRedemption({ promoId: appliedPromoId, userId: ctx.user.id, orderId: res.id, discountKs });
+          await db.incrementPromoUse(appliedPromoId);
+        }
 
         return { id: res.id };
       }),
   }),
 
+  promo: router({
+    validate: protectedProcedure
+      .input(z.object({ code: z.string().trim().max(40), packageId: z.number().int() }))
+      .query(async ({ ctx, input }) => {
+        const pkg = await db.getPackageById(input.packageId);
+        if (!pkg) return { valid: false, message: "Package not found", discountKs: 0, finalKs: 0 };
+        const code = input.code.trim().toUpperCase();
+        const promo = await db.getPromoByCode(code);
+        if (!promo || !promo.isActive) return { valid: false, message: "Promo code မမှန်ပါ", discountKs: 0, finalKs: pkg.priceKs };
+        if (promo.expiresAt && new Date(promo.expiresAt) < new Date()) return { valid: false, message: "သက်တမ်းကုန်သွားပါပြီ", discountKs: 0, finalKs: pkg.priceKs };
+        if (promo.maxUses != null && promo.usedCount >= promo.maxUses) return { valid: false, message: "အသုံးပြုခွင့် ပြည့်သွားပါပြီ", discountKs: 0, finalKs: pkg.priceKs };
+        if (promo.minOrderKs != null && pkg.priceKs < promo.minOrderKs) return { valid: false, message: "Order amount နည်းနေပါသည်", discountKs: 0, finalKs: pkg.priceKs };
+        const used = await db.countUserRedemptions(promo.id, ctx.user.id);
+        if (used >= promo.perUserLimit) return { valid: false, message: "သုံးပြီးသား ဖြစ်ပါသည်", discountKs: 0, finalKs: pkg.priceKs };
+        let discountKs = promo.discountType === "percent" ? Math.floor((pkg.priceKs * promo.discountValue) / 100) : promo.discountValue;
+        if (discountKs > pkg.priceKs) discountKs = pkg.priceKs;
+        return { valid: true, message: "OK", discountKs, finalKs: pkg.priceKs - discountKs, discountType: promo.discountType, discountValue: promo.discountValue };
+      }),
+    adminList: adminProcedure.query(() => db.listPromos()),
+    adminCreate: adminProcedure
+      .input(z.object({
+        code: z.string().trim().min(1).max(40),
+        discountType: z.enum(["percent", "fixed"]),
+        discountValue: z.number().int().min(1),
+        minOrderKs: z.number().int().min(0).nullish(),
+        maxUses: z.number().int().min(1).nullish(),
+        perUserLimit: z.number().int().min(1).default(1),
+        isActive: z.boolean().default(true),
+        expiresAt: z.string().nullish(),
+      }))
+      .mutation(async ({ input }) => {
+        const code = input.code.trim().toUpperCase();
+        return db.createPromo({
+          code,
+          discountType: input.discountType,
+          discountValue: input.discountValue,
+          minOrderKs: input.minOrderKs ?? null,
+          maxUses: input.maxUses ?? null,
+          perUserLimit: input.perUserLimit,
+          isActive: input.isActive,
+          expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
+        });
+      }),
+    adminUpdate: adminProcedure
+      .input(z.object({
+        id: z.number().int(),
+        discountType: z.enum(["percent", "fixed"]).optional(),
+        discountValue: z.number().int().min(1).optional(),
+        minOrderKs: z.number().int().min(0).nullish(),
+        maxUses: z.number().int().min(1).nullish(),
+        perUserLimit: z.number().int().min(1).optional(),
+        isActive: z.boolean().optional(),
+        expiresAt: z.string().nullish(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, expiresAt, ...rest } = input;
+        const data: Record<string, unknown> = { ...rest };
+        if (expiresAt !== undefined) data.expiresAt = expiresAt ? new Date(expiresAt) : null;
+        await db.updatePromo(id, data as any);
+        return { success: true };
+      }),
+    adminDelete: adminProcedure
+      .input(z.object({ id: z.number().int() }))
+      .mutation(async ({ input }) => {
+        await db.deletePromo(input.id);
+        return { success: true };
+      }),
+  }),
+
+  referral: router({
+    create: protectedProcedure
+      .input(z.object({ referrerId: z.number().int(), deviceHash: z.string().max(64).optional() }))
+      .mutation(async ({ ctx, input }) => {
+        if (input.referrerId === ctx.user.id) return { success: false, reason: "self" };
+        const existing = await db.getReferralByReferredId(ctx.user.id);
+        if (existing) return { success: false, reason: "already_referred" };
+        if (input.deviceHash) {
+          const deviceUsed = await db.getReferralByDeviceHash(input.deviceHash);
+          if (deviceUsed) return { success: false, reason: "device_used" };
+        }
+        const referrer = await db.getUserById(input.referrerId);
+        if (!referrer) return { success: false, reason: "referrer_not_found" };
+        const count = await db.countReferralsByReferrer(input.referrerId);
+        if (count >= 20) return { success: false, reason: "limit_reached" };
+        await db.createReferral({ referrerId: input.referrerId, referredId: ctx.user.id, deviceHash: input.deviceHash ?? null, status: "pending" });
+        const welcomePromo = await db.getPromoByCode("WELCOME10");
+        if (welcomePromo) await db.collectCoupon(ctx.user.id, welcomePromo.id, "welcome").catch(() => {});
+        return { success: true };
+      }),
+    myStats: protectedProcedure.query(async ({ ctx }) => {
+      const refs = await db.listMyReferrals(ctx.user.id);
+      return {
+        referralCode: String(ctx.user.id),
+        total: refs.length,
+        pending: refs.filter(r => r.status === "pending").length,
+        completed: refs.filter(r => r.status === "completed").length,
+        earned: refs.filter(r => r.status === "completed").length * 500,
+      };
+    }),
+    myCoupons: protectedProcedure.query(({ ctx }) => db.getUserCoupons(ctx.user.id)),
+    listPublic: publicProcedure.query(() => db.listPublicPromos()),
+    collect: protectedProcedure
+      .input(z.object({ promoId: z.number().int() }))
+      .mutation(async ({ ctx, input }) => {
+        const promo = await db.getPromoById(input.promoId);
+        if (!promo || !promo.isActive) throw new TRPCError({ code: "BAD_REQUEST", message: "Promo မတွေ့" });
+        await db.collectCoupon(ctx.user.id, input.promoId, "collect");
+        return { success: true };
+      }),
+  }),
+
+  support: router({
+    myMessages: protectedProcedure.query(({ ctx }) => db.getSupportMessages(ctx.user.id)),
+    send: protectedProcedure
+      .input(z.object({ content: z.string().min(1).max(2000), mode: z.enum(["ai", "admin"]) }))
+      .mutation(async ({ ctx, input }) => {
+        await db.addSupportMessage(ctx.user.id, "user", input.content);
+        if (input.mode === "ai" && process.env.ANTHROPIC_API_KEY) {
+          const history = await db.getSupportMessages(ctx.user.id);
+          const msgs = history.map(m => ({ role: (m.role === "user" ? "user" : "assistant") as "user"|"assistant", content: m.content }));
+          try {
+            const res = await fetch("https://api.anthropic.com/v1/messages", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY!, "anthropic-version": "2023-06-01" },
+              body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1024,
+                system: "You are a support agent for gamingitem-mm.shop, a Myanmar game top-up shop. Reply in Burmese (Myanmar language). Be helpful, friendly and concise. Help with orders, deposits, top-ups, and payments.",
+                messages: msgs }),
+            });
+            const data = await res.json();
+            const reply = data.content?.[0]?.text ?? "ခဏစောင့်ပေးပါ၊ ကူညီပေးပါမည်။";
+            await db.addSupportMessage(ctx.user.id, "assistant", reply);
+            return { success: true, aiReply: reply };
+          } catch { return { success: true, aiReply: null }; }
+        }
+        return { success: true, aiReply: null };
+      }),
+    adminList: adminProcedure.query(() => db.getAllSupportConversations()),
+    adminGetMessages: adminProcedure
+      .input(z.object({ userId: z.number().int() }))
+      .query(({ input }) => db.getSupportMessages(input.userId)),
+    adminReply: adminProcedure
+      .input(z.object({ userId: z.number().int(), content: z.string().min(1).max(2000) }))
+      .mutation(async ({ input }) => {
+        await db.addSupportMessage(input.userId, "admin", input.content);
+        return { success: true };
+      }),
+    adminClear: adminProcedure
+      .input(z.object({ userId: z.number().int() }))
+      .mutation(async ({ input }) => { await db.deleteSupportMessages(input.userId); return { success: true }; }),
+  }),
+
+  review: router({
+    // Submit review (completed order ရှိမှ)
+    submit: protectedProcedure
+      .input(z.object({
+        orderId: z.number().int(),
+        productId: z.number().int(),
+        rating: z.number().int().min(1).max(5),
+        comment: z.string().max(500).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const order = await db.getOrderById(input.orderId);
+        if (!order || order.userId !== ctx.user.id) throw new TRPCError({ code: "FORBIDDEN" });
+        if (order.status !== "completed") throw new TRPCError({ code: "BAD_REQUEST", message: "Order မပြီးသေး" });
+        const existing = await db.getReviewByOrder(input.orderId);
+        if (existing) throw new TRPCError({ code: "BAD_REQUEST", message: "Review တင်ပြီးသား" });
+        await db.createReview({ userId: ctx.user.id, productId: input.productId, orderId: input.orderId, rating: input.rating, comment: input.comment ?? null });
+        await db.addSpinTicket(ctx.user.id, 1);
+        return { success: true, ticketEarned: true };
+      }),
+    // Get reviews for a product
+    forProduct: publicProcedure
+      .input(z.object({ productId: z.number().int() }))
+      .query(({ input }) => db.listReviewsByProduct(input.productId)),
+    // Check if user already reviewed an order
+    myReview: protectedProcedure
+      .input(z.object({ orderId: z.number().int() }))
+      .query(({ input }) => db.getReviewByOrder(input.orderId)),
+    // Get my spin tickets
+    myTickets: protectedProcedure.query(async ({ ctx }) => {
+      const user = await db.getUserById(ctx.user.id);
+      return { tickets: user?.spinTickets ?? 0 };
+    }),
+  }),
+
+  stock: router({
+    listByProduct: adminProcedure
+      .input(z.object({ productId: z.number().int() }))
+      .query(({ input }) => db.listStockByProduct(input.productId)),
+    countAvailable: publicProcedure
+      .input(z.object({ productId: z.number().int() }))
+      .query(({ input }) => db.countAvailableStock(input.productId)),
+    add: adminProcedure
+      .input(z.object({ productId: z.number().int(), planName: z.string().min(1).max(120), credentials: z.string().min(1) }))
+      .mutation(async ({ input }) => {
+        await db.addStockItem({ productId: input.productId, planName: input.planName, credentials: input.credentials, isUsed: false });
+        return { success: true };
+      }),
+    addBulk: adminProcedure
+      .input(z.object({ productId: z.number().int(), planName: z.string().min(1).max(120), credentialsList: z.array(z.string().min(1)) }))
+      .mutation(async ({ input }) => {
+        for (const cred of input.credentialsList) {
+          await db.addStockItem({ productId: input.productId, planName: input.planName, credentials: cred, isUsed: false });
+        }
+        return { success: true, added: input.credentialsList.length };
+      }),
+    delete: adminProcedure
+      .input(z.object({ id: z.number().int() }))
+      .mutation(async ({ input }) => { await db.deleteStockItem(input.id); return { success: true }; }),
+  }),
+
+  rankBoost: router({
+    create: protectedProcedure
+      .input(z.object({
+        gameType: z.string().min(1).max(60),
+        serviceType: z.enum(["rank_boost","progression"]).default("rank_boost"),
+        boostType: z.enum(["pilot","duo","solo"]).default("pilot"),
+        uid: z.string().max(120).optional(),
+        serverId: z.string().max(60).optional(),
+        currentRank: z.string().max(80).optional(),
+        targetRank: z.string().max(80).optional(),
+        currentStars: z.string().max(60).optional(),
+        services: z.string().max(2000).optional(),
+        adventureRank: z.string().max(60).optional(),
+        contact: z.string().max(200).optional(),
+        accountNote: z.string().max(1000).optional(),
+        screenshotUrl: z.string().max(500).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const res = await db.createRankBoostOrder({
+          ...input, userId: ctx.user.id,
+          uid: input.uid ?? null, serverId: input.serverId ?? null,
+          currentRank: input.currentRank ?? null, targetRank: input.targetRank ?? null,
+          currentStars: input.currentStars ?? null, services: input.services ?? null,
+          adventureRank: input.adventureRank ?? null, contact: input.contact ?? null,
+          accountNote: input.accountNote ?? null, screenshotUrl: input.screenshotUrl ?? null,
+        });
+        const svcLabel = input.serviceType === "progression" ? "Progression" : `${input.currentRank} → ${input.targetRank}`;
+        notifyOwner({ title: "🏆 New Boost Order!", content: `${ctx.user.name} — ${input.gameType} | ${svcLabel} | ${input.boostType}` }).catch(() => {});
+        return { success: true, id: res.id };
+      }),
+    myOrders: protectedProcedure.query(({ ctx }) => db.listRankBoostOrders(ctx.user.id)),
+    adminList: adminProcedure.query(() => db.listRankBoostOrders()),
+    adminUpdate: adminProcedure
+      .input(z.object({
+        id: z.number().int(),
+        status: z.enum(["new","review","quotation","payment_received","booster_assigned","in_progress","completed","delivered","closed","rejected"]).optional(),
+        adminNote: z.string().optional(),
+        quotedPriceKs: z.number().int().optional(),
+        depositPriceKs: z.number().int().optional(),
+        boosterName: z.string().optional(),
+        progressNote: z.string().optional(),
+        accountEmail: z.string().optional(),
+        accountPassword: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        await db.updateRankBoostOrder(id, data as any);
+        return { success: true };
+      }),
+  }),
+
+  gameAcc: router({
+    listPublic: publicProcedure.query(() => db.listGameAccountListings("listed")),
+    myListings: protectedProcedure.query(({ ctx }) => db.listGameAccountListings().then(r => r.filter(l => l.userId === ctx.user.id))),
+    submit: protectedProcedure
+      .input(z.object({
+        gameType: z.string().min(1).max(60),
+        uid: z.string().max(120).optional(),
+        ign: z.string().max(120).optional(),
+        rank: z.string().max(80).optional(),
+        loginMethod: z.string().max(200).optional(),
+        accountDetails: z.string().max(2000).optional(),
+        screenshotUrl: z.string().max(500).optional(),
+        sellerPriceKs: z.number().int().min(1000),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const buyPrice = Math.floor(input.sellerPriceKs * 0.8);
+        const sellPrice = Math.floor(buyPrice * 1.2);
+        const res = await db.createGameAccountListing({ ...input, userId: ctx.user.id, adminBuyPriceKs: buyPrice, adminSellPriceKs: sellPrice, uid: input.uid ?? null, ign: input.ign ?? null, rank: input.rank ?? null, loginMethod: input.loginMethod ?? null, accountDetails: input.accountDetails ?? null, screenshotUrl: input.screenshotUrl ?? null });
+        notifyOwner({ title: "💼 New Account Listing!", content: `${ctx.user.name} — ${input.gameType} | Rank: ${input.rank ?? "?"} | Asking: ${input.sellerPriceKs.toLocaleString()} Ks | Admin buys: ${buyPrice.toLocaleString()} Ks` }).catch(() => {});
+        return { success: true, id: res.id };
+      }),
+    adminList: adminProcedure.query(() => db.listGameAccountListings()),
+    adminUpdate: adminProcedure
+      .input(z.object({
+        id: z.number().int(),
+        status: z.enum(["pending","approved","listed","sold","rejected"]).optional(),
+        adminNote: z.string().optional(),
+        adminCredentials: z.string().optional(),
+        adminBuyPriceKs: z.number().int().optional(),
+        adminSellPriceKs: z.number().int().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        await db.updateGameAccountListing(id, data as any);
+        return { success: true };
+      }),
+  }),
+
   /* ----------------------------- Balance / Wallet ----------------------------- */
+
   balance: router({
     get: protectedProcedure.query(async ({ ctx }) => {
       const balanceKs = await db.getUserBalance(ctx.user.id);
@@ -258,8 +596,8 @@ export const appRouter = router({
         const uploaded = await uploadDataUrl(input.receiptDataUrl, `deposits/${ctx.user.id}`);
         await db.updateDeposit(dep.id, { receiptKey: uploaded.key, receiptUrl: uploaded.url });
         notifyOwner({
-          title: "New deposit receipt",
-          content: `${dep.method.toUpperCase()} deposit ${dep.amountKs.toLocaleString()} Ks (memo ${dep.memo}) from ${ctx.user.name ?? "user #" + ctx.user.id}`,
+          title: "💵 Deposit အသစ်!",
+          content: `💰 ${dep.amountKs.toLocaleString()} Ks\n🏦 ${dep.method.toUpperCase()}\n👤 ${ctx.user.name ?? "user #" + ctx.user.id}${ctx.user.email ? " (" + ctx.user.email + ")" : ""}\n🆔 Memo: ${dep.memo}\n🕐 ${new Date().toLocaleString("en-GB", { timeZone: "Asia/Yangon" })}`,
         }).catch(() => {});
         return { success: true };
       }),
@@ -326,9 +664,13 @@ export const appRouter = router({
 
     spin: protectedProcedure.mutation(async ({ ctx }) => {
       const user = await db.getUserById(ctx.user.id);
+      // Ticket-based spin (review တင်မှ ticket ရ)
+      const tickets = user?.spinTickets ?? 0;
+      if (tickets < 1) throw new TRPCError({ code: "BAD_REQUEST", message: "Spin ticket မရှိသေး — review တင်ပြီး ticket ရပါ" });
+      await db.useSpinTicket(ctx.user.id);
       const last = user?.lastSpinAt ? new Date(user.lastSpinAt).getTime() : 0;
       const now = Date.now();
-      if (last && now < last + SPIN_COOLDOWN_MS) {
+      if (false && last && now < last + SPIN_COOLDOWN_MS) {
         throw new TRPCError({
           code: "TOO_MANY_REQUESTS",
           message: "You have already spun today. Come back tomorrow!",
@@ -488,7 +830,18 @@ export const appRouter = router({
     setOrderStatus: adminProcedure
       .input(z.object({ id: z.number().int(), status: statusEnum, adminNote: z.string().optional() }))
       .mutation(async ({ input }) => {
+        const order = await db.getOrderById(input.id);
         await db.setOrderStatus(input.id, input.status, input.adminNote);
+        if (input.status === "completed" && order) {
+          const result = await db.completeReferralReward(order.userId);
+          if (result.completed && result.referrerId) {
+            notifyOwner({ title: "🎉 Referral Reward!", content: `User #${order.userId} ပထမဆုံး order ဝယ်ပြီ! +500 Ks → User #${result.referrerId}` }).catch(() => {});
+          }
+          const credentials = await db.deliverStockItem(order.productId, order.id);
+          if (credentials) {
+            notifyOwner({ title: "📦 Auto Delivered!", content: `Order #${order.id} → credentials auto sent` }).catch(() => {});
+          }
+        }
         return { success: true };
       }),
 
@@ -608,6 +961,11 @@ export const appRouter = router({
           accountName: z.string().max(120).optional(),
           isActive: z.boolean().optional(),
           sortOrder: z.number().int().optional(),
+          qrImageUrl: z.string().optional(),
+          instructions: z.string().max(500).optional(),
+          instructionsMy: z.string().max(500).optional(),
+          autoFlow: z.boolean().optional(),
+          walletAddress: z.string().max(200).optional(),
         }),
       )
       .mutation(async ({ input }) => {
@@ -625,6 +983,11 @@ export const appRouter = router({
             accountName: z.string().max(120).optional(),
             isActive: z.boolean().optional(),
             sortOrder: z.number().int().optional(),
+            qrImageUrl: z.string().nullish(),
+            instructions: z.string().max(500).nullish(),
+            instructionsMy: z.string().max(500).nullish(),
+            autoFlow: z.boolean().optional(),
+            walletAddress: z.string().max(200).nullish(),
           }),
         }),
       )

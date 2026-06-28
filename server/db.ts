@@ -23,6 +23,24 @@ import {
   spins,
   userBalances,
   users,
+  promoCodes,
+  promoRedemptions,
+  InsertPromoCode,
+  InsertPromoRedemption,
+  referrals,
+  userCoupons,
+  InsertReferral,
+  InsertUserCoupon,
+  supportMessages,
+  InsertSupportMessage,
+  reviews,
+  InsertReview,
+  stockItems,
+  InsertStockItem,
+  rankBoostOrders,
+  gameAccountListings,
+  InsertRankBoostOrder,
+  InsertGameAccountListing,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
@@ -618,4 +636,288 @@ export async function failDeposit(id: number, adminNote?: string) {
     .update(deposits)
     .set({ status: "failed", adminNote: adminNote ?? dep.adminNote })
     .where(eq(deposits.id, id));
+}
+
+/* ----------------------------- Promo codes ----------------------------- */
+
+export async function getPromoByCode(code: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(promoCodes).where(eq(promoCodes.code, code)).limit(1);
+  return result.length > 0 ? result[0] : undefined;
+}
+
+export async function getPromoById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(promoCodes).where(eq(promoCodes.id, id)).limit(1);
+  return result.length > 0 ? result[0] : undefined;
+}
+
+export async function countUserRedemptions(promoId: number, userId: number): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const rows = await db
+    .select({ c: sql<number>`count(*)` })
+    .from(promoRedemptions)
+    .where(and(eq(promoRedemptions.promoId, promoId), eq(promoRedemptions.userId, userId)));
+  return Number(rows[0]?.c ?? 0);
+}
+
+export async function recordRedemption(data: InsertPromoRedemption) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const [res] = await db.insert(promoRedemptions).values(data).$returningId();
+  return res;
+}
+
+export async function incrementPromoUse(promoId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.update(promoCodes).set({ usedCount: sql`${promoCodes.usedCount} + 1` }).where(eq(promoCodes.id, promoId));
+}
+
+export async function listPromos() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(promoCodes).orderBy(desc(promoCodes.createdAt));
+}
+
+export async function createPromo(data: InsertPromoCode) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const [res] = await db.insert(promoCodes).values(data).$returningId();
+  return res;
+}
+
+export async function updatePromo(id: number, data: Partial<InsertPromoCode>) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.update(promoCodes).set(data).where(eq(promoCodes.id, id));
+}
+
+export async function deletePromo(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.delete(promoCodes).where(eq(promoCodes.id, id));
+}
+
+/* ----------------------------- Referral system ----------------------------- */
+
+export async function createReferral(data: InsertReferral) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const [res] = await db.insert(referrals).values(data).$returningId();
+  return res;
+}
+export async function getReferralByReferredId(referredId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const r = await db.select().from(referrals).where(eq(referrals.referredId, referredId)).limit(1);
+  return r[0];
+}
+export async function getReferralByDeviceHash(deviceHash: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const r = await db.select().from(referrals).where(eq(referrals.deviceHash, deviceHash)).limit(1);
+  return r[0];
+}
+export async function countReferralsByReferrer(referrerId: number): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const rows = await db.select({ c: sql<number>`count(*)` }).from(referrals).where(eq(referrals.referrerId, referrerId));
+  return Number(rows[0]?.c ?? 0);
+}
+export async function listMyReferrals(referrerId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(referrals).where(eq(referrals.referrerId, referrerId)).orderBy(desc(referrals.createdAt));
+}
+export async function completeReferralReward(referredId: number): Promise<{ completed: boolean; referrerId: number | null }> {
+  const db = await getDb();
+  if (!db) return { completed: false, referrerId: null };
+  const rows = await db.select({ c: sql<number>`count(*)` }).from(orders).where(and(eq(orders.userId, referredId), eq(orders.status, "completed")));
+  if (Number(rows[0]?.c ?? 0) !== 1) return { completed: false, referrerId: null };
+  const refRows = await db.select().from(referrals).where(and(eq(referrals.referredId, referredId), eq(referrals.status, "pending"))).limit(1);
+  if (refRows.length === 0) return { completed: false, referrerId: null };
+  const ref = refRows[0];
+  await adjustBalance(ref.referrerId, 500, "referral", `Referral reward: user #${referredId} first order`);
+  await db.update(referrals).set({ status: "completed", rewardPaidAt: new Date() }).where(eq(referrals.id, ref.id));
+  return { completed: true, referrerId: ref.referrerId };
+}
+
+/* ----------------------------- User coupons ----------------------------- */
+
+export async function collectCoupon(userId: number, promoId: number, source: "welcome" | "collect" | "referral") {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.insert(userCoupons).values({ userId, promoId, source }).onDuplicateKeyUpdate({ set: { source } });
+}
+export async function getUserCoupons(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select({ id: userCoupons.id, source: userCoupons.source, collectedAt: userCoupons.collectedAt,
+      code: promoCodes.code, discountType: promoCodes.discountType, discountValue: promoCodes.discountValue,
+      isActive: promoCodes.isActive, expiresAt: promoCodes.expiresAt, minOrderKs: promoCodes.minOrderKs })
+    .from(userCoupons)
+    .innerJoin(promoCodes, eq(userCoupons.promoId, promoCodes.id))
+    .where(eq(userCoupons.userId, userId))
+    .orderBy(desc(userCoupons.collectedAt));
+}
+export async function listPublicPromos() {
+  const db = await getDb();
+  if (!db) return [];
+  const now = new Date();
+  return db.select().from(promoCodes)
+    .where(and(eq(promoCodes.isActive, true), sql`(${promoCodes.expiresAt} IS NULL OR ${promoCodes.expiresAt} > ${now})`))
+    .orderBy(desc(promoCodes.discountValue));
+}
+
+/* ----------------------------- Support chat ----------------------------- */
+
+export async function getSupportMessages(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(supportMessages).where(eq(supportMessages.userId, userId)).orderBy(supportMessages.createdAt);
+}
+export async function addSupportMessage(userId: number, role: "user" | "assistant" | "admin", content: string) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const [res] = await db.insert(supportMessages).values({ userId, role, content }).$returningId();
+  return res;
+}
+export async function getAllSupportConversations() {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.execute(sql`SELECT sm.userId, u.name, u.email, (SELECT content FROM supportMessages WHERE userId = sm.userId ORDER BY createdAt DESC LIMIT 1) as lastMsg, (SELECT role FROM supportMessages WHERE userId = sm.userId ORDER BY createdAt DESC LIMIT 1) as lastRole, (SELECT createdAt FROM supportMessages WHERE userId = sm.userId ORDER BY createdAt DESC LIMIT 1) as lastAt, COUNT(*) as msgCount FROM supportMessages sm JOIN users u ON u.id = sm.userId GROUP BY sm.userId, u.name, u.email ORDER BY lastAt DESC`);
+  return rows[0] as any[];
+}
+export async function deleteSupportMessages(userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.delete(supportMessages).where(eq(supportMessages.userId, userId));
+}
+
+/* ----------------------------- Reviews ----------------------------- */
+
+export async function createReview(data: InsertReview) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const [res] = await db.insert(reviews).values(data).$returningId();
+  return res;
+}
+export async function getReviewByOrder(orderId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const r = await db.select().from(reviews).where(eq(reviews.orderId, orderId)).limit(1);
+  return r[0];
+}
+export async function listReviewsByProduct(productId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({
+    id: reviews.id, rating: reviews.rating, comment: reviews.comment, createdAt: reviews.createdAt,
+    userName: users.name,
+  }).from(reviews).innerJoin(users, eq(reviews.userId, users.id))
+    .where(eq(reviews.productId, productId)).orderBy(desc(reviews.createdAt));
+}
+export async function addSpinTicket(userId: number, count = 1) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.update(users).set({ spinTickets: sql`${users.spinTickets} + ${count}` }).where(eq(users.id, userId));
+}
+export async function useSpinTicket(userId: number): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  const user = await getUserById(userId);
+  if (!user || (user.spinTickets ?? 0) < 1) return false;
+  await db.update(users).set({ spinTickets: sql`${users.spinTickets} - 1` }).where(eq(users.id, userId));
+  return true;
+}
+
+/* ----------------------------- Stock items ----------------------------- */
+
+export async function addStockItem(data: InsertStockItem) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const [res] = await db.insert(stockItems).values(data).$returningId();
+  return res;
+}
+
+export async function listStockByProduct(productId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(stockItems).where(eq(stockItems.productId, productId)).orderBy(desc(stockItems.createdAt));
+}
+
+export async function countAvailableStock(productId: number): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const rows = await db.select({ c: sql<number>`count(*)` }).from(stockItems)
+    .where(and(eq(stockItems.productId, productId), eq(stockItems.isUsed, false)));
+  return Number(rows[0]?.c ?? 0);
+}
+
+export async function deliverStockItem(productId: number, orderId: number): Promise<string | null> {
+  const db = await getDb();
+  if (!db) return null;
+  const available = await db.select().from(stockItems)
+    .where(and(eq(stockItems.productId, productId), eq(stockItems.isUsed, false)))
+    .limit(1);
+  if (available.length === 0) return null;
+  const item = available[0];
+  await db.update(stockItems).set({ isUsed: true, orderId, usedAt: new Date() }).where(eq(stockItems.id, item.id));
+  await db.update(orders).set({ deliveredCredentials: item.credentials }).where(eq(orders.id, orderId));
+  return item.credentials;
+}
+
+export async function deleteStockItem(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.delete(stockItems).where(eq(stockItems.id, id));
+}
+
+/* ----------------------------- Rank Boost ----------------------------- */
+export async function createRankBoostOrder(data: InsertRankBoostOrder) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const [res] = await db.insert(rankBoostOrders).values(data).$returningId();
+  return res;
+}
+export async function listRankBoostOrders(userId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (userId) return db.select().from(rankBoostOrders).where(eq(rankBoostOrders.userId, userId)).orderBy(desc(rankBoostOrders.createdAt));
+  return db.select().from(rankBoostOrders).orderBy(desc(rankBoostOrders.createdAt));
+}
+export async function updateRankBoostOrder(id: number, data: Partial<InsertRankBoostOrder>) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.update(rankBoostOrders).set(data as any).where(eq(rankBoostOrders.id, id));
+}
+
+/* ----------------------------- Game Account Listings ----------------------------- */
+export async function createGameAccountListing(data: InsertGameAccountListing) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const [res] = await db.insert(gameAccountListings).values(data).$returningId();
+  return res;
+}
+export async function listGameAccountListings(status?: string) {
+  const db = await getDb();
+  if (!db) return [];
+  if (status) return db.select().from(gameAccountListings).where(eq(gameAccountListings.status, status as any)).orderBy(desc(gameAccountListings.createdAt));
+  return db.select().from(gameAccountListings).orderBy(desc(gameAccountListings.createdAt));
+}
+export async function getGameAccountListing(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const r = await db.select().from(gameAccountListings).where(eq(gameAccountListings.id, id)).limit(1);
+  return r[0];
+}
+export async function updateGameAccountListing(id: number, data: Partial<InsertGameAccountListing>) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.update(gameAccountListings).set(data).where(eq(gameAccountListings.id, id));
 }

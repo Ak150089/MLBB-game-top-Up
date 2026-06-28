@@ -14,6 +14,42 @@ import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Link, useLocation, useRoute } from "wouter";
 
+
+function ReviewsSection({ productId }: { productId: number }) {
+  const { data: reviews } = trpc.review.forProduct.useQuery({ productId });
+  if (!reviews || reviews.length === 0) return (
+    <div className="mt-6">
+      <h3 className="mb-2 font-display text-base font-bold">⭐ Reviews</h3>
+      <div className="rounded-2xl border border-dashed border-border py-8 text-center text-sm text-muted-foreground">Review မရှိသေး — ဝယ်ပြီး review တင်ပါ!</div>
+    </div>
+  );
+  const avg = reviews.reduce((s, r) => s + r.rating, 0) / reviews.length;
+  return (
+    <div className="mt-6">
+      <div className="mb-3 flex items-center gap-2">
+        <h3 className="font-display text-base font-bold">⭐ Reviews</h3>
+        <span className="rounded-full bg-amber-400/15 px-2 py-0.5 text-xs font-bold text-amber-400">{avg.toFixed(1)} / 5</span>
+        <span className="text-xs text-muted-foreground">({reviews.length} reviews)</span>
+      </div>
+      <div className="space-y-2">
+        {reviews.map(r => (
+          <div key={r.id} className="rounded-2xl border border-border bg-card p-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1">
+                {Array.from({length:5}).map((_,i) => (
+                  <Star key={i} className={`size-3.5 ${i < r.rating ? "fill-amber-400 text-amber-400" : "text-muted-foreground"}`} />
+                ))}
+              </div>
+              <span className="text-[10px] text-muted-foreground">{r.userName ?? "User"} · {new Date(r.createdAt).toLocaleDateString()}</span>
+            </div>
+            {r.comment && <p className="mt-1.5 text-sm text-muted-foreground">{r.comment}</p>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function ProductDetail() {
   const { t } = useLang();
   const [, params] = useRoute("/product/:slug");
@@ -31,8 +67,17 @@ export default function ProductDetail() {
   const [gameUserId, setGameUserId] = useState("");
   const [gameServerId, setGameServerId] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("");
+  const [promoCode, setPromoCode] = useState("");
+  const [promoInput, setPromoInput] = useState("");
   const [receiptDataUrl, setReceiptDataUrl] = useState<string | undefined>();
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const promoValidate = trpc.promo.validate.useQuery(
+    { code: promoCode, packageId: selected?.id ?? 0 },
+    { enabled: !!promoCode && !!selected, staleTime: 10_000 }
+  );
+  const discountKs = promoValidate.data?.valid ? (promoValidate.data.discountKs ?? 0) : 0;
+  const finalKs = (selected?.priceKs ?? 0) - discountKs;
 
   const createOrder = trpc.orders.create.useMutation({
     onSuccess: () => {
@@ -105,6 +150,7 @@ export default function ProductDetail() {
       gameServerId: gameServerId.trim() || undefined,
       paymentMethod: paymentMethod || undefined,
       receiptDataUrl,
+      promoCode: promoCode || undefined,
     });
   }
 
@@ -261,8 +307,13 @@ export default function ProductDetail() {
                     className="flex items-center justify-between rounded-lg border border-dashed border-border bg-background/40 px-3 py-2 text-xs"
                   >
                     <div>
-                      <div className="font-semibold">{acc.accountNumber}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold">{acc.accountNumber}</span>
+                        <button onClick={() => { navigator.clipboard.writeText(acc.accountNumber); toast.success("Copied!"); }} className="rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary hover:bg-primary/20">Copy</button>
+                      </div>
                       {acc.accountName && <div className="text-muted-foreground">{acc.accountName}</div>}
+                      {(acc as any).instructions && <div className="mt-1 text-muted-foreground">{(acc as any).instructions}</div>}
+                      {(acc as any).qrImageUrl && <img src={(acc as any).qrImageUrl} className="mt-2 h-28 w-28 rounded-xl border border-border object-cover" />}
                     </div>
                     <button
                       className="press text-muted-foreground"
@@ -313,13 +364,48 @@ export default function ProductDetail() {
         )}
       </div>
 
+      {/* Promo code */}
+      {selected && (
+        <div className="mt-4">
+          <label className="text-sm font-medium">Promo Code</label>
+          <div className="mt-1 flex gap-2">
+            <input
+              value={promoInput}
+              onChange={e => setPromoInput(e.target.value.toUpperCase())}
+              placeholder="WELCOME10"
+              className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm uppercase outline-none"
+            />
+            <button
+              onClick={() => setPromoCode(promoInput.trim())}
+              disabled={!promoInput.trim()}
+              className="h-9 rounded-md bg-primary px-3 text-sm font-semibold text-white disabled:opacity-40"
+            >သုံး</button>
+            {promoCode && (
+              <button onClick={() => { setPromoCode(""); setPromoInput(""); }} className="h-9 rounded-md border border-border px-3 text-sm">✕</button>
+            )}
+          </div>
+          {promoCode && promoValidate.data && (
+            <p className={"mt-1.5 text-xs font-semibold " + (promoValidate.data.valid ? "text-emerald-400" : "text-destructive")}>
+              {promoValidate.data.valid ? "✅ " + promoCode + " — " + discountKs.toLocaleString() + " Ks လျှော့!" : "❌ " + promoValidate.data.message}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Sticky submit */}
       <div className="mt-5">
         <div className="mb-2 flex items-center justify-between px-1">
           <span className="text-sm text-muted-foreground">{t("product.total")}</span>
-          <span className="font-display text-xl font-extrabold text-primary">
-            {formatKs(selected?.priceKs ?? 0)}
-          </span>
+          {discountKs > 0 ? (
+            <div className="text-right">
+              <div className="text-xs line-through text-muted-foreground">{formatKs(selected?.priceKs ?? 0)}</div>
+              <div className="font-display text-xl font-extrabold text-primary">{formatKs(finalKs)}</div>
+            </div>
+          ) : (
+            <span className="font-display text-xl font-extrabold text-primary">
+              {formatKs(selected?.priceKs ?? 0)}
+            </span>
+          )}
         </div>
         <Button
           onClick={submit}
@@ -335,6 +421,8 @@ export default function ProductDetail() {
           )}
         </Button>
       </div>
+      {/* Reviews section */}
+      <ReviewsSection productId={product.id} />
     </StoreLayout>
   );
 }

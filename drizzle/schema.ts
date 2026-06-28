@@ -1,4 +1,4 @@
-import { boolean, int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { boolean, decimal, int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
 
 /**
  * Core user table backing auth flow.
@@ -13,6 +13,8 @@ export const users = mysqlTable("users", {
   role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
   /** Total amount spent on completed orders, in Myanmar Kyat. Drives the leaderboard. */
   totalSpentKs: int("totalSpentKs").default(0).notNull(),
+  /** Spin tickets earned from reviews. */
+  spinTickets: int("spinTickets").default(0).notNull(),
   /** Last time the user used the daily spin wheel (UTC). Null if never spun. */
   lastSpinAt: timestamp("lastSpinAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -68,6 +70,7 @@ export const packages = mysqlTable("packages", {
   isPopular: boolean("isPopular").default(false).notNull(),
   isActive: boolean("isActive").default(true).notNull(),
   sortOrder: int("sortOrder").default(0).notNull(),
+  priceUsd: decimal("priceUsd", { precision: 10, scale: 4 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
@@ -97,6 +100,7 @@ export const orders = mysqlTable("orders", {
   receiptUrl: text("receiptUrl"),
   status: mysqlEnum("status", ["pending", "processing", "completed", "failed"]).default("pending").notNull(),
   adminNote: text("adminNote"),
+  deliveredCredentials: text("deliveredCredentials"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -128,6 +132,11 @@ export const paymentAccounts = mysqlTable("paymentAccounts", {
   accountName: varchar("accountName", { length: 120 }),
   isActive: boolean("isActive").default(true).notNull(),
   sortOrder: int("sortOrder").default(0).notNull(),
+  qrImageUrl: text("qrImageUrl"),
+  instructions: text("instructions"),
+  instructionsMy: text("instructionsMy"),
+  autoFlow: boolean("autoFlow").default(false).notNull(),
+  walletAddress: varchar("walletAddress", { length: 200 }),
 });
 
 export type PaymentAccount = typeof paymentAccounts.$inferSelect;
@@ -152,6 +161,7 @@ export const siteSettings = mysqlTable("siteSettings", {
   contactEmail: varchar("contactEmail", { length: 200 }).default("shineaker@gmail.com").notNull(),
   /** Exchange rate: how many Myanmar Kyat per 1 USD (for TON/Binance deposit conversion). */
   usdToKs: int("usdToKs").default(4500).notNull(),
+  adminLastSeenAt: timestamp("adminLastSeenAt"),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
@@ -269,3 +279,133 @@ export const deposits = mysqlTable("deposits", {
 
 export type Deposit = typeof deposits.$inferSelect;
 export type InsertDeposit = typeof deposits.$inferInsert;
+
+/**
+ * Help Center conversation messages, threaded per user.
+ * role: user (customer) | assistant (AI auto-reply) | admin (human reply)
+ */
+export const supportMessages = mysqlTable("supportMessages", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  role: mysqlEnum("role", ["user", "assistant", "admin"]).notNull(),
+  content: text("content").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type SupportMessage = typeof supportMessages.$inferSelect;
+export type InsertSupportMessage = typeof supportMessages.$inferInsert;
+
+/** Promo / discount codes. */
+export const promoCodes = mysqlTable("promoCodes", {
+  id: int("id").autoincrement().primaryKey(),
+  code: varchar("code", { length: 40 }).notNull().unique(),
+  discountType: mysqlEnum("discountType", ["percent", "fixed"]).default("percent").notNull(),
+  discountValue: int("discountValue").notNull(),
+  minOrderKs: int("minOrderKs"),
+  maxUses: int("maxUses"),
+  usedCount: int("usedCount").default(0).notNull(),
+  perUserLimit: int("perUserLimit").default(1).notNull(),
+  isActive: boolean("isActive").default(true).notNull(),
+  expiresAt: timestamp("expiresAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+/** Per-user promo redemption tracking. */
+export const promoRedemptions = mysqlTable("promoRedemptions", {
+  id: int("id").autoincrement().primaryKey(),
+  promoId: int("promoId").notNull(),
+  userId: int("userId").notNull(),
+  orderId: int("orderId"),
+  discountKs: int("discountKs").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type InsertPromoCode = typeof promoCodes.$inferInsert;
+export type InsertPromoRedemption = typeof promoRedemptions.$inferInsert;
+
+/** Referral tracking */
+export const referrals = mysqlTable("referrals", {
+  id: int("id").autoincrement().primaryKey(),
+  referrerId: int("referrerId").notNull(),
+  referredId: int("referredId").notNull().unique(),
+  deviceHash: varchar("deviceHash", { length: 64 }),
+  status: mysqlEnum("status", ["pending", "completed"]).default("pending").notNull(),
+  rewardPaidAt: timestamp("rewardPaidAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export const userCoupons = mysqlTable("userCoupons", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  promoId: int("promoId").notNull(),
+  source: mysqlEnum("source", ["welcome", "collect", "referral"]).default("collect").notNull(),
+  collectedAt: timestamp("collectedAt").defaultNow().notNull(),
+});
+export type InsertReferral = typeof referrals.$inferInsert;
+export type InsertUserCoupon = typeof userCoupons.$inferInsert;
+
+/** Support chat messages */
+
+/** Product reviews */
+export const reviews = mysqlTable("reviews", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  productId: int("productId").notNull(),
+  orderId: int("orderId").notNull().unique(),
+  rating: int("rating").default(5).notNull(),
+  comment: text("comment"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type InsertReview = typeof reviews.$inferInsert;
+
+/** Pre-stocked digital product credentials */
+export const stockItems = mysqlTable("stockItems", {
+  id: int("id").autoincrement().primaryKey(),
+  productId: int("productId").notNull(),
+  planName: varchar("planName", { length: 120 }).notNull(),
+  credentials: text("credentials").notNull(),
+  isUsed: boolean("isUsed").default(false).notNull(),
+  orderId: int("orderId"),
+  usedAt: timestamp("usedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type InsertStockItem = typeof stockItems.$inferInsert;
+
+/** Rank Boost Service orders */
+export const rankBoostOrders = mysqlTable("rankBoostOrders", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  gameType: varchar("gameType", { length: 60 }).notNull(),
+  currentRank: varchar("currentRank", { length: 80 }).notNull(),
+  targetRank: varchar("targetRank", { length: 80 }).notNull(),
+  accountEmail: varchar("accountEmail", { length: 200 }).notNull(),
+  accountPassword: text("accountPassword").notNull(),
+  accountNote: text("accountNote"),
+  priceKs: int("priceKs").default(0).notNull(),
+  paymentMethod: varchar("paymentMethod", { length: 60 }),
+  status: mysqlEnum("status", ["pending","processing","completed","rejected"]).default("pending").notNull(),
+  adminNote: text("adminNote"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+/** Game Account Buy/Sell listings */
+export const gameAccountListings = mysqlTable("gameAccountListings", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  gameType: varchar("gameType", { length: 60 }).notNull(),
+  uid: varchar("uid", { length: 120 }),
+  ign: varchar("ign", { length: 120 }),
+  rank: varchar("rank", { length: 80 }),
+  loginMethod: varchar("loginMethod", { length: 200 }),
+  accountDetails: text("accountDetails"),
+  screenshotUrl: text("screenshotUrl"),
+  sellerPriceKs: int("sellerPriceKs").default(0).notNull(),
+  adminBuyPriceKs: int("adminBuyPriceKs").default(0).notNull(),
+  adminSellPriceKs: int("adminSellPriceKs").default(0).notNull(),
+  adminCredentials: text("adminCredentials"),
+  status: mysqlEnum("status", ["pending","approved","listed","sold","rejected"]).default("pending").notNull(),
+  adminNote: text("adminNote"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type InsertRankBoostOrder = typeof rankBoostOrders.$inferInsert;
+export type InsertGameAccountListing = typeof gameAccountListings.$inferInsert;

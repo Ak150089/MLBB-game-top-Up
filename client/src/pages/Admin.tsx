@@ -297,50 +297,114 @@ function ProductDialog({ product, onClose }: { product?: Product; onClose: () =>
 function PackagesManager({ productId }: { productId: number }) {
   const utils = trpc.useUtils();
   const { data } = trpc.admin.productWithPackages.useQuery({ id: productId });
+  const { data: settings } = trpc.admin.getSettings.useQuery();
+  const usdToKs = (settings as any)?.usdToKs ?? 4500;
   const [label, setLabel] = useState("");
-  const [price, setPrice] = useState("");
+  const [priceUsd, setPriceUsd] = useState("");
+  const [priceKs, setPriceKs] = useState("");
+  const [useUsd, setUseUsd] = useState(false);
+  const [expandedPkg, setExpandedPkg] = useState<number|null>(null);
+  const [editingPkg, setEditingPkg] = useState<any>(null);
 
   const createPkg = trpc.admin.createPackage.useMutation({
-    onSuccess: () => {
-      utils.admin.productWithPackages.invalidate({ id: productId });
-      setLabel("");
-      setPrice("");
-    },
+    onSuccess: () => { utils.admin.productWithPackages.invalidate({ id: productId }); setLabel(""); setPriceUsd(""); setPriceKs(""); },
     onError: e => toast.error(e.message),
+  });
+  const updatePkg = trpc.admin.updatePackage.useMutation({
+    onSuccess: () => { utils.admin.productWithPackages.invalidate({ id: productId }); setEditingPkg(null); },
   });
   const delPkg = trpc.admin.deletePackage.useMutation({
     onSuccess: () => utils.admin.productWithPackages.invalidate({ id: productId }),
   });
 
+  // Auto-update all package prices when rate changes
+  const updateAllPrices = trpc.admin.updatePackage.useMutation({ onSuccess: () => utils.admin.productWithPackages.invalidate({ id: productId }) });
+  async function recalcAllPrices() {
+    const pkgs = data?.packages ?? [];
+    for (const p of pkgs) {
+      if ((p as any).priceUsd) {
+        const newKs = Math.round((p as any).priceUsd * usdToKs);
+        await updateAllPrices.mutateAsync({ id: p.id, priceKs: newKs });
+      }
+    }
+    toast.success("All prices updated!");
+  }
+
+  const computedKs = useUsd && priceUsd ? Math.round(parseFloat(priceUsd) * usdToKs) : parseInt(priceKs) || 0;
+
   return (
-    <div className="mt-3 space-y-2 rounded-xl border border-border bg-background/40 p-3">
-      <div className="space-y-2">
+    <div className="mt-3 space-y-2 rounded-xl border border-amber-400/20 bg-background/40 p-3">
+      {/* Rate display + recalc */}
+      <div className="flex items-center justify-between rounded-lg bg-amber-400/10 px-3 py-2 text-xs">
+        <span className="text-amber-400 font-bold">💱 1 USD = {usdToKs.toLocaleString()} Ks</span>
+        <button onClick={recalcAllPrices} className="rounded-lg bg-amber-400/20 px-2 py-1 text-amber-400 font-semibold hover:bg-amber-400/30 transition-all">
+          🔄 Recalc All Prices
+        </button>
+      </div>
+
+      {/* Package list — accordion */}
+      <div className="space-y-1.5">
         {(data?.packages ?? []).map(p => (
-          <div key={p.id} className="flex items-center justify-between rounded-lg bg-card px-3 py-2 text-sm">
-            <span className="font-medium">{p.label}</span>
-            <div className="flex items-center gap-3">
-              <span className="font-bold text-primary">{formatKs(p.priceKs)}</span>
-              <button className="text-destructive" onClick={() => delPkg.mutate({ id: p.id })}>
-                <Trash2 className="size-3.5" />
-              </button>
-            </div>
+          <div key={p.id} className="rounded-lg border border-border bg-card overflow-hidden">
+            <button className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-accent/10 transition-all"
+              onClick={() => setExpandedPkg(expandedPkg === p.id ? null : p.id)}>
+              <span className="font-medium">{p.label}</span>
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-primary text-xs">{formatKs(p.priceKs)}</span>
+                {(p as any).priceUsd && <span className="text-[10px] text-muted-foreground">(${(p as any).priceUsd})</span>}
+                {p.isPopular && <span className="rounded-full bg-primary/20 px-1.5 text-[9px] font-bold text-primary">HOT</span>}
+                <span className="text-muted-foreground">{expandedPkg === p.id ? "▲" : "▼"}</span>
+              </div>
+            </button>
+            {expandedPkg === p.id && (
+              <div className="border-t border-border px-3 py-2 space-y-2">
+                {editingPkg?.id === p.id ? (
+                  <div className="space-y-2">
+                    <Input className="h-7 text-xs" placeholder="Label" value={editingPkg.label} onChange={e => setEditingPkg((v:any)=>({...v,label:e.target.value}))} />
+                    <div className="flex gap-2">
+                      <Input className="h-7 text-xs" type="number" placeholder="USD" value={editingPkg.priceUsd??""} onChange={e => setEditingPkg((v:any)=>({...v,priceUsd:e.target.value,priceKs:Math.round(parseFloat(e.target.value||"0")*usdToKs)}))} />
+                      <Input className="h-7 text-xs" type="number" placeholder="Ks" value={editingPkg.priceKs??""} onChange={e => setEditingPkg((v:any)=>({...v,priceKs:parseInt(e.target.value)||0}))} />
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" className="h-7 flex-1 text-xs" onClick={() => updatePkg.mutate({ id: p.id, label: editingPkg.label, priceKs: editingPkg.priceKs })}>Save</Button>
+                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditingPkg(null)}>Cancel</Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" className="h-7 flex-1 text-xs" onClick={() => setEditingPkg({...p, priceUsd:(p as any).priceUsd??""})}>✏️ Edit</Button>
+                    <Switch checked={p.isActive} onCheckedChange={v => updatePkg.mutate({ id: p.id, isActive: v })} />
+                    <Switch checked={p.isPopular} onCheckedChange={v => updatePkg.mutate({ id: p.id, isPopular: v })} />
+                    <button onClick={() => { if(confirm("Delete?")) delPkg.mutate({ id: p.id }); }} className="text-destructive"><Trash2 className="size-3.5" /></button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         ))}
-        {(data?.packages?.length ?? 0) === 0 && (
-          <p className="text-center text-xs text-muted-foreground">No packages yet</p>
-        )}
+        {(data?.packages?.length ?? 0) === 0 && <p className="text-center text-xs text-muted-foreground py-2">No packages yet</p>}
       </div>
-      <div className="flex gap-2">
-        <Input className="h-8" placeholder="86 Diamonds" value={label} onChange={e => setLabel(e.target.value)} />
-        <Input className="h-8 w-24" placeholder="Ks" type="number" value={price} onChange={e => setPrice(e.target.value)} />
-        <Button
-          size="sm"
-          className="h-8 shrink-0"
-          disabled={!label || !price || createPkg.isPending}
-          onClick={() => createPkg.mutate({ productId, label, priceKs: parseInt(price, 10) || 0 })}
-        >
-          <Plus className="size-4" />
-        </Button>
+
+      {/* Add new package */}
+      <div className="border-t border-border pt-2 space-y-2">
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-muted-foreground">Price in:</span>
+          <button onClick={() => setUseUsd(false)} className={`px-2 py-0.5 rounded font-bold ${!useUsd?"bg-primary text-white":"bg-muted"}`}>Ks</button>
+          <button onClick={() => setUseUsd(true)} className={`px-2 py-0.5 rounded font-bold ${useUsd?"bg-primary text-white":"bg-muted"}`}>USD</button>
+        </div>
+        <div className="flex gap-2">
+          <Input className="h-8 flex-1" placeholder="86 Diamonds" value={label} onChange={e => setLabel(e.target.value)} />
+          {useUsd ? (
+            <Input className="h-8 w-20" placeholder="$" type="number" step="0.01" value={priceUsd} onChange={e => setPriceUsd(e.target.value)} />
+          ) : (
+            <Input className="h-8 w-24" placeholder="Ks" type="number" value={priceKs} onChange={e => setPriceKs(e.target.value)} />
+          )}
+          <Button size="sm" className="h-8 shrink-0" disabled={!label || (!priceUsd && !priceKs) || createPkg.isPending}
+            onClick={() => createPkg.mutate({ productId, label, priceKs: computedKs })}>
+            <Plus className="size-4" />
+          </Button>
+        </div>
+        {useUsd && priceUsd && <p className="text-[10px] text-muted-foreground">≈ {computedKs.toLocaleString()} Ks</p>}
       </div>
     </div>
   );
@@ -405,6 +469,7 @@ function ProductsAdmin() {
                 {expanded === p.id ? "Hide packages" : "Manage packages"}
               </button>
               {expanded === p.id && <PackagesManager productId={p.id} />}
+              {expanded === p.id && <StockManager productId={p.id} productName={p.name} />}
             </div>
           ))}
         </div>
@@ -421,56 +486,183 @@ function ProductsAdmin() {
 function PaymentsAdmin() {
   const utils = trpc.useUtils();
   const { data, isLoading } = trpc.admin.paymentAccounts.useQuery();
-  const [method, setMethod] = useState("");
-  const [number, setNumber] = useState("");
-  const [name, setName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<any>(null);
+  const [form, setForm] = useState({ method:"", accountNumber:"", accountName:"", instructions:"", instructionsMy:"", autoFlow:false, walletAddress:"", qrImageUrl:"" });
 
   const create = trpc.admin.createPaymentAccount.useMutation({
-    onSuccess: () => {
-      utils.admin.paymentAccounts.invalidate();
-      setMethod("");
-      setNumber("");
-      setName("");
-    },
+    onSuccess: () => { utils.admin.paymentAccounts.invalidate(); setCreating(false); setForm({ method:"", accountNumber:"", accountName:"", instructions:"", instructionsMy:"", autoFlow:false, walletAddress:"", qrImageUrl:"" }); },
     onError: e => toast.error(e.message),
+  });
+  const updateMut = trpc.admin.updatePaymentAccount.useMutation({
+    onSuccess: () => { utils.admin.paymentAccounts.invalidate(); setEditing(null); },
   });
   const del = trpc.admin.deletePaymentAccount.useMutation({
     onSuccess: () => utils.admin.paymentAccounts.invalidate(),
   });
 
+  function openEdit(a: any) {
+    setEditing({ ...a });
+  }
+
+  const methodIcons: Record<string,string> = { kbzpay:"💛", wavepay:"🟣", ayapay:"🔵", ton:"💎", binance:"🟡", uabpay:"🟤", balance:"💰" };
+
   return (
-    <div className="space-y-3">
-      {isLoading ? (
-        <Skeleton className="h-24 w-full rounded-2xl" />
-      ) : (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-lg font-bold">Payment Accounts</h2>
+        <Button size="sm" onClick={() => setCreating(true)} className="bg-gradient-to-r from-primary to-accent">+ ထည့်</Button>
+      </div>
+
+      {isLoading ? <Skeleton className="h-24 w-full rounded-2xl" /> : (
         <div className="space-y-2">
-          {data!.map(a => (
-            <div key={a.id} className="flex items-center justify-between rounded-xl border border-border bg-card px-4 py-3">
-              <div>
-                <div className="text-sm font-semibold">{a.method}</div>
-                <div className="text-xs text-muted-foreground">
-                  {a.accountNumber} {a.accountName ? `· ${a.accountName}` : ""}
+          {(data ?? []).map(a => (
+            <div key={a.id} className="rounded-2xl border border-border bg-card p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">{methodIcons[a.method.toLowerCase()] ?? "💳"}</span>
+                  <div>
+                    <div className="font-semibold text-sm uppercase tracking-wide">{a.method}</div>
+                    <div className="text-xs text-muted-foreground">{a.accountNumber || a.walletAddress || "—"}{a.accountName ? ` · ${a.accountName}` : ""}</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {a.autoFlow && <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-400">AUTO</span>}
+                  {!a.isActive && <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">OFF</span>}
+                  <Switch checked={!!a.isActive} onCheckedChange={v => updateMut.mutate({ id: a.id, data: { isActive: v } })} />
+                  <Button size="sm" variant="ghost" onClick={() => openEdit(a)}>✏️</Button>
+                  <Button size="sm" variant="ghost" className="text-destructive" onClick={() => { if(confirm(`${a.method} ဖျက်မလား?`)) del.mutate({ id: a.id }); }}><Trash2 className="size-4" /></Button>
                 </div>
               </div>
-              <button className="text-destructive" onClick={() => del.mutate({ id: a.id })}>
-                <Trash2 className="size-4" />
-              </button>
+              {a.instructions && <p className="mt-2 text-xs text-muted-foreground border-t border-border pt-2">{a.instructions}</p>}
+              {a.qrImageUrl && <img src={a.qrImageUrl} className="mt-2 h-20 w-20 rounded-xl object-cover border border-border" />}
             </div>
           ))}
         </div>
       )}
-      <div className="space-y-2 rounded-2xl border border-dashed border-border p-3">
-        <Input placeholder="Method (e.g. KBZPay)" value={method} onChange={e => setMethod(e.target.value)} />
-        <Input placeholder="Account number" value={number} onChange={e => setNumber(e.target.value)} />
-        <Input placeholder="Account name (optional)" value={name} onChange={e => setName(e.target.value)} />
-        <Button
-          className="w-full gap-1"
-          disabled={!method || !number || create.isPending}
-          onClick={() => create.mutate({ method, accountNumber: number, accountName: name || undefined })}
-        >
-          <Plus className="size-4" /> Add payment account
-        </Button>
+
+      {/* Create Dialog */}
+      <Dialog open={creating} onOpenChange={setCreating}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Payment Account ထည့်</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div><Label>Method</Label><Input placeholder="kbzpay / wavepay / ayapay / ton / binance" value={form.method} onChange={e => setForm(f=>({...f,method:e.target.value.toLowerCase()}))} /></div>
+            <div><Label>Account Number / Wallet</Label><Input placeholder="09791890162 or wallet address" value={form.accountNumber} onChange={e => setForm(f=>({...f,accountNumber:e.target.value}))} /></div>
+            <div><Label>Account Name</Label><Input placeholder="ShineAker" value={form.accountName} onChange={e => setForm(f=>({...f,accountName:e.target.value}))} /></div>
+            <div><Label>Instructions (EN)</Label><Textarea placeholder="Transfer to account and upload screenshot" value={form.instructions} onChange={e => setForm(f=>({...f,instructions:e.target.value}))} rows={2} /></div>
+            <div><Label>Instructions (MY)</Label><Textarea placeholder="ငွေလွှဲပြီး screenshot တင်ပါ" value={form.instructionsMy} onChange={e => setForm(f=>({...f,instructionsMy:e.target.value}))} rows={2} /></div>
+            <div><Label>QR Image URL (optional)</Label><Input placeholder="https://..." value={form.qrImageUrl} onChange={e => setForm(f=>({...f,qrImageUrl:e.target.value}))} /></div>
+            <div className="flex items-center gap-3"><Switch checked={form.autoFlow} onCheckedChange={v => setForm(f=>({...f,autoFlow:v}))} /><Label>Auto Flow (TON/Crypto)</Label></div>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => create.mutate({ method:form.method, accountNumber:form.accountNumber, accountName:form.accountName||undefined, instructions:form.instructions||undefined, instructionsMy:form.instructionsMy||undefined, qrImageUrl:form.qrImageUrl||undefined, autoFlow:form.autoFlow })} disabled={!form.method || create.isPending} className="w-full bg-gradient-to-r from-primary to-accent">ဆောက်မည်</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Dialog */}
+      {editing && (
+        <Dialog open={!!editing} onOpenChange={() => setEditing(null)}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>{editing.method.toUpperCase()} ပြင်မည်</DialogTitle></DialogHeader>
+            <div className="space-y-3">
+              <div><Label>Account Number / Wallet</Label><Input value={editing.accountNumber} onChange={e => setEditing((v:any)=>({...v,accountNumber:e.target.value}))} /></div>
+              <div><Label>Account Name</Label><Input value={editing.accountName??""} onChange={e => setEditing((v:any)=>({...v,accountName:e.target.value}))} /></div>
+              <div><Label>Instructions (EN)</Label><Textarea value={editing.instructions??""} onChange={e => setEditing((v:any)=>({...v,instructions:e.target.value}))} rows={2} /></div>
+              <div><Label>Instructions (MY)</Label><Textarea value={editing.instructionsMy??""} onChange={e => setEditing((v:any)=>({...v,instructionsMy:e.target.value}))} rows={2} /></div>
+              <div><Label>QR Image URL</Label><Input value={editing.qrImageUrl??""} onChange={e => setEditing((v:any)=>({...v,qrImageUrl:e.target.value}))} placeholder="https://..." /></div>
+              <div className="flex items-center gap-3"><Switch checked={!!editing.autoFlow} onCheckedChange={v => setEditing((ev:any)=>({...ev,autoFlow:v}))} /><Label>Auto Flow</Label></div>
+            </div>
+            <DialogFooter>
+              <Button onClick={() => updateMut.mutate({ id:editing.id, data:{ accountNumber:editing.accountNumber, accountName:editing.accountName, instructions:editing.instructions, instructionsMy:editing.instructionsMy, qrImageUrl:editing.qrImageUrl||null, autoFlow:!!editing.autoFlow } })} disabled={updateMut.isPending} className="w-full bg-gradient-to-r from-primary to-accent">သိမ်းမည်</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
+  );
+}
+
+/* ----------------------------- Promos mgmt ----------------------------- */
+function PromosAdmin() {
+  const { data: promos, refetch } = trpc.promo.adminList.useQuery();
+  const createMut = trpc.promo.adminCreate.useMutation({ onSuccess: () => { refetch(); setOpen(false); resetForm(); } });
+  const updateMut = trpc.promo.adminUpdate.useMutation({ onSuccess: () => refetch() });
+  const deleteMut = trpc.promo.adminDelete.useMutation({ onSuccess: () => refetch() });
+
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ code: "", discountType: "percent" as "percent"|"fixed", discountValue: 10, minOrderKs: "", maxUses: "", perUserLimit: 1, expiresAt: "" });
+  const resetForm = () => setForm({ code: "", discountType: "percent", discountValue: 10, minOrderKs: "", maxUses: "", perUserLimit: 1, expiresAt: "" });
+
+  function handleCreate() {
+    createMut.mutate({
+      code: form.code,
+      discountType: form.discountType,
+      discountValue: form.discountValue,
+      minOrderKs: form.minOrderKs ? Number(form.minOrderKs) : null,
+      maxUses: form.maxUses ? Number(form.maxUses) : null,
+      perUserLimit: form.perUserLimit,
+      expiresAt: form.expiresAt || null,
+    });
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-lg font-bold">Promo Codes</h2>
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogTrigger asChild>
+            <Button size="sm" className="bg-gradient-to-r from-primary to-accent font-semibold">+ ထည့်</Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Promo Code အသစ်</DialogTitle></DialogHeader>
+            <div className="space-y-3">
+              <div><Label>Code</Label><Input value={form.code} onChange={e => setForm(f => ({ ...f, code: e.target.value.toUpperCase() }))} placeholder="WELCOME10" /></div>
+              <div><Label>Discount Type</Label>
+                <select className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form.discountType} onChange={e => setForm(f => ({ ...f, discountType: e.target.value as any }))}>
+                  <option value="percent">Percent (%)</option>
+                  <option value="fixed">Fixed (Ks)</option>
+                </select>
+              </div>
+              <div><Label>Discount Value {form.discountType === "percent" ? "(%)" : "(Ks)"}</Label><Input type="number" value={form.discountValue} onChange={e => setForm(f => ({ ...f, discountValue: Number(e.target.value) }))} /></div>
+              <div><Label>Min Order (Ks) — optional</Label><Input type="number" value={form.minOrderKs} onChange={e => setForm(f => ({ ...f, minOrderKs: e.target.value }))} placeholder="ဗလာ = မကန့်သတ်" /></div>
+              <div><Label>Max Uses — optional</Label><Input type="number" value={form.maxUses} onChange={e => setForm(f => ({ ...f, maxUses: e.target.value }))} placeholder="ဗလာ = unlimited" /></div>
+              <div><Label>Per-User Limit</Label><Input type="number" value={form.perUserLimit} onChange={e => setForm(f => ({ ...f, perUserLimit: Number(e.target.value) }))} /></div>
+              <div><Label>Expires At — optional</Label><Input type="date" value={form.expiresAt} onChange={e => setForm(f => ({ ...f, expiresAt: e.target.value }))} /></div>
+            </div>
+            <DialogFooter>
+              <Button onClick={handleCreate} disabled={createMut.isPending || !form.code} className="w-full bg-gradient-to-r from-primary to-accent font-semibold">ဆောက်မည်</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
+      {!promos || promos.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-border py-12 text-center text-sm text-muted-foreground">Promo code မရှိသေး</div>
+      ) : (
+        <div className="space-y-2">
+          {promos.map(p => (
+            <div key={p.id} className="flex items-center justify-between rounded-2xl border border-border bg-card px-4 py-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono font-bold tracking-wider">{p.code}</span>
+                  <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold text-primary">
+                    {p.discountType === "percent" ? `${p.discountValue}%` : `${p.discountValue.toLocaleString()} Ks`}
+                  </span>
+                  {!p.isActive && <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">off</span>}
+                </div>
+                <div className="mt-0.5 text-xs text-muted-foreground">
+                  {p.usedCount}/{p.maxUses ?? "\u221e"} used · per-user: {p.perUserLimit}
+                  {p.expiresAt && ` · expires ${new Date(p.expiresAt).toLocaleDateString()}`}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch checked={!!p.isActive} onCheckedChange={v => updateMut.mutate({ id: p.id, isActive: v })} />
+                <Button size="sm" variant="ghost" className="text-destructive" onClick={() => { if (confirm(`${p.code} ဖျက်မလား?`)) deleteMut.mutate({ id: p.id }); }}>✕</Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -482,18 +674,15 @@ function BrandingAdmin() {
   const { data, isLoading } = trpc.admin.getSettings.useQuery();
   const [form, setForm] = useState<{ brandName: string; logoUrl: string | null; tagline: string; taglineMy: string; contactEmail: string; usdToKs: number } | null>(null);
 
-  const current =
-    form ??
-    (data
-      ? {
-          brandName: data.brandName,
-          logoUrl: data.logoUrl ?? null,
-          tagline: data.tagline,
-          taglineMy: data.taglineMy,
-          contactEmail: (data as any).contactEmail ?? "",
-          usdToKs: (data as any).usdToKs ?? 4500,
-        }
-      : null);
+  const defaultVals = { brandName: "ShineAker", logoUrl: null, tagline: "Top Up. Power Up. Win More.", taglineMy: "ဖြည့်လိုက်၊ အားဖြည့်လိုက်၊ ပိုနိုင်လိုက်။", contactEmail: "shineaker@gmail.com", usdToKs: 4500 };
+  const current = form ?? (data ? {
+    brandName: data.brandName,
+    logoUrl: data.logoUrl ?? null,
+    tagline: data.tagline,
+    taglineMy: data.taglineMy,
+    contactEmail: (data as any).contactEmail ?? "",
+    usdToKs: (data as any).usdToKs ?? 4500,
+  } : isLoading ? null : defaultVals);
 
   const save = trpc.admin.updateSettings.useMutation({
     onSuccess: () => {
@@ -989,6 +1178,172 @@ function DepositsAdmin() {
 }
 
 /* ----------------------------- Admin shell ----------------------------- */
+
+/* ----------------------------- Rank Boost Admin ----------------------------- */
+function RankBoostAdmin() {
+  const { data: orders, refetch } = trpc.rankBoost.adminList.useQuery();
+  const updateMut = trpc.rankBoost.adminUpdate.useMutation({ onSuccess: () => refetch() });
+  const statusColors: Record<string,string> = { pending:"text-amber-400", processing:"text-blue-400", completed:"text-emerald-400", rejected:"text-destructive" };
+
+  return (
+    <div className="space-y-3">
+      <h2 className="font-display text-lg font-bold">🏆 Rank Boost Orders</h2>
+      {!orders || orders.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-border py-12 text-center text-sm text-muted-foreground">Orders မရှိသေး</div>
+      ) : orders.map((o: any) => (
+        <div key={o.id} className="rounded-2xl border border-border bg-card p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="font-bold">{o.gameType}</span>
+              <span className="mx-2 text-muted-foreground">—</span>
+              <span className="text-sm">{o.currentRank} → {o.targetRank}</span>
+            </div>
+            <span className={`text-xs font-bold uppercase ${statusColors[o.status]}`}>{o.status}</span>
+          </div>
+          <div className="text-xs text-muted-foreground space-y-0.5">
+            <div>💰 {o.priceKs?.toLocaleString()} Ks · User #{o.userId}</div>
+            <div className="font-semibold text-amber-400">📧 {o.accountEmail}</div>
+            <div className="font-mono">🔑 {o.accountPassword}</div>
+            {o.accountNote && <div>📝 {o.accountNote}</div>}
+          </div>
+          <div className="flex gap-2 pt-1">
+            {["processing","completed","rejected"].map(st => (
+              <Button key={st} size="sm" variant={o.status===st?"default":"outline"} className="text-xs h-7"
+                onClick={() => updateMut.mutate({ id: o.id, status: st as any })}>
+                {st==="processing"?"▶ Processing":st==="completed"?"✅ Complete":"❌ Reject"}
+              </Button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ----------------------------- Game Acc Admin ----------------------------- */
+function GameAccAdmin() {
+  const { data: listings, refetch } = trpc.gameAcc.adminList.useQuery();
+  const updateMut = trpc.gameAcc.adminUpdate.useMutation({ onSuccess: () => refetch() });
+  const [editing, setEditing] = useState<any>(null);
+  const statusColors: Record<string,string> = { pending:"text-amber-400", approved:"text-blue-400", listed:"text-emerald-400", sold:"text-gray-400", rejected:"text-destructive" };
+
+  return (
+    <div className="space-y-3">
+      <h2 className="font-display text-lg font-bold">💼 Game Account Listings</h2>
+      {!listings || listings.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-border py-12 text-center text-sm text-muted-foreground">Listings မရှိသေး</div>
+      ) : listings.map((l: any) => (
+        <div key={l.id} className="rounded-2xl border border-border bg-card p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="font-bold">{l.gameType}</span>
+              {l.rank && <span className="ml-2 rounded-full bg-amber-400/20 px-2 py-0.5 text-[10px] font-bold text-amber-400">{l.rank}</span>}
+            </div>
+            <span className={`text-xs font-bold uppercase ${statusColors[l.status]}`}>{l.status}</span>
+          </div>
+          <div className="text-xs text-muted-foreground space-y-0.5">
+            {l.ign && <div>IGN: {l.ign} | UID: {l.uid}</div>}
+            {l.loginMethod && <div>Login: {l.loginMethod}</div>}
+            <div className="flex gap-3">
+              <span>Seller asks: <b>{l.sellerPriceKs?.toLocaleString()} Ks</b></span>
+              <span className="text-emerald-400">Admin buys: <b>{l.adminBuyPriceKs?.toLocaleString()} Ks</b></span>
+              <span className="text-primary">Lists at: <b>{l.adminSellPriceKs?.toLocaleString()} Ks</b></span>
+            </div>
+            {l.accountDetails && <div className="mt-1 text-muted-foreground">{l.accountDetails?.slice(0,100)}</div>}
+            {l.screenshotUrl && <a href={l.screenshotUrl} target="_blank" rel="noreferrer" className="text-primary text-xs hover:underline">📷 Screenshots</a>}
+          </div>
+          <div className="flex gap-2 pt-1 flex-wrap">
+            <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => setEditing(l)}>✏️ Edit & Publish</Button>
+            <Button size="sm" variant="outline" className="text-xs h-7 text-emerald-400" onClick={() => updateMut.mutate({ id: l.id, status: "listed" })}>✅ List</Button>
+            <Button size="sm" variant="outline" className="text-xs h-7 text-blue-400" onClick={() => updateMut.mutate({ id: l.id, status: "sold" })}>💰 Sold</Button>
+            <Button size="sm" variant="outline" className="text-xs h-7 text-destructive" onClick={() => updateMut.mutate({ id: l.id, status: "rejected" })}>❌ Reject</Button>
+          </div>
+        </div>
+      ))}
+
+      {editing && (
+        <Dialog open={!!editing} onOpenChange={() => setEditing(null)}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>💼 Edit & Publish Listing</DialogTitle></DialogHeader>
+            <div className="space-y-3">
+              <div><Label>Admin Credentials (Gmail/Password)</Label><Textarea value={editing.adminCredentials??""} onChange={e => setEditing((v:any)=>({...v,adminCredentials:e.target.value}))} placeholder="email: xxx@gmail.com | password: xxxxxxxx | recovery: xxx" rows={3} className="font-mono text-xs" /></div>
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label className="text-xs">Buy Price (Ks)</Label><Input type="number" value={editing.adminBuyPriceKs} onChange={e => setEditing((v:any)=>({...v,adminBuyPriceKs:parseInt(e.target.value)||0}))} /></div>
+                <div><Label className="text-xs">Sell Price (Ks)</Label><Input type="number" value={editing.adminSellPriceKs} onChange={e => setEditing((v:any)=>({...v,adminSellPriceKs:parseInt(e.target.value)||0}))} /></div>
+              </div>
+              <div><Label className="text-xs">Admin Note</Label><Input value={editing.adminNote??""} onChange={e => setEditing((v:any)=>({...v,adminNote:e.target.value}))} /></div>
+            </div>
+            <DialogFooter>
+              <Button onClick={() => { updateMut.mutate({ id:editing.id, adminCredentials:editing.adminCredentials, adminBuyPriceKs:editing.adminBuyPriceKs, adminSellPriceKs:editing.adminSellPriceKs, adminNote:editing.adminNote, status:"listed" }); setEditing(null); }} className="w-full bg-gradient-to-r from-primary to-accent">🚀 Publish Listing</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
+  );
+}
+
+
+function StockManager({ productId, productName }: { productId: number; productName: string }) {
+  const { data: items, refetch } = trpc.stock.listByProduct.useQuery({ productId });
+  const { data: countData } = trpc.stock.countAvailable.useQuery({ productId });
+  const addMut = trpc.stock.add.useMutation({ onSuccess: () => { refetch(); setSingle(""); } });
+  const bulkMut = trpc.stock.addBulk.useMutation({ onSuccess: () => { refetch(); setBulk(""); } });
+  const delMut = trpc.stock.delete.useMutation({ onSuccess: () => refetch() });
+  const [single, setSingle] = useState("");
+  const [bulk, setBulk] = useState("");
+  const [planName, setPlanName] = useState("Standard");
+  const [tab, setTab] = useState<"list"|"add">("list");
+  return (
+    <div className="mt-3 rounded-2xl border border-amber-400/30 bg-amber-400/5 p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">📦</span>
+          <span className="font-bold text-sm">{productName} Stock</span>
+          <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-400">{countData ?? 0} available</span>
+        </div>
+        <div className="flex gap-1">
+          <button onClick={() => setTab("list")} className={`px-3 py-1 rounded-lg text-xs font-semibold ${tab==="list"?"bg-primary text-white":"bg-muted text-muted-foreground"}`}>List</button>
+          <button onClick={() => setTab("add")} className={`px-3 py-1 rounded-lg text-xs font-semibold ${tab==="add"?"bg-primary text-white":"bg-muted text-muted-foreground"}`}>+ Add</button>
+        </div>
+      </div>
+      {tab === "list" && (
+        <div className="space-y-1.5 max-h-48 overflow-y-auto">
+          {!items || items.length === 0 ? (
+            <div className="text-center text-xs text-muted-foreground py-4">Stock မရှိသေး</div>
+          ) : items.map(item => (
+            <div key={item.id} className={`flex items-center justify-between rounded-lg border px-3 py-2 text-xs ${item.isUsed ? "border-border bg-muted/30 opacity-50" : "border-emerald-500/30 bg-emerald-500/5"}`}>
+              <div className="min-w-0 flex-1">
+                <span className={`mr-2 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${item.isUsed ? "bg-muted text-muted-foreground" : "bg-emerald-500/20 text-emerald-400"}`}>{item.isUsed ? "USED" : "AVAIL"}</span>
+                <span className="font-mono text-muted-foreground">{item.credentials.slice(0,40)}{item.credentials.length>40?"...":""}</span>
+              </div>
+              {!item.isUsed && <button onClick={() => { if(confirm("Delete?")) delMut.mutate({ id: item.id }); }} className="ml-2 text-destructive">✕</button>}
+            </div>
+          ))}
+        </div>
+      )}
+      {tab === "add" && (
+        <div className="space-y-2">
+          <div><Label className="text-xs">Plan Name</Label><Input value={planName} onChange={e => setPlanName(e.target.value)} placeholder="Standard / 1 Month" className="h-8 text-xs" /></div>
+          <div>
+            <Label className="text-xs">Single credential</Label>
+            <div className="flex gap-2 mt-1">
+              <Input value={single} onChange={e => setSingle(e.target.value)} placeholder="username:password or code" className="h-8 text-xs font-mono" />
+              <Button size="sm" onClick={() => addMut.mutate({ productId, planName, credentials: single })} disabled={!single.trim()||addMut.isPending} className="h-8 px-3 text-xs">Add</Button>
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs">Bulk add (တစ်ကြောင်းတစ်ခု)</Label>
+            <Textarea value={bulk} onChange={e => setBulk(e.target.value)} placeholder={"user1:pass1"} rows={4} className="text-xs font-mono mt-1" />
+            <Button size="sm" onClick={() => bulkMut.mutate({ productId, planName, credentialsList: bulk.split("\n").map(l=>l.trim()).filter(Boolean) })} disabled={!bulk.trim()||bulkMut.isPending} className="mt-2 w-full text-xs bg-gradient-to-r from-primary to-accent">
+              {bulkMut.isPending ? "Adding..." : `Bulk Add (${bulk.split("\n").filter(l=>l.trim()).length} items)`}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 export default function Admin() {
   const { t } = useLang();
   const { user, loading } = useAuth();
@@ -1025,6 +1380,7 @@ export default function Admin() {
           <TabsTrigger value="banners" className="flex-1">{t("admin.banners")}</TabsTrigger>
           <TabsTrigger value="prizes" className="flex-1">{t("admin.prizes")}</TabsTrigger>
           <TabsTrigger value="payments" className="flex-1">{t("admin.payments")}</TabsTrigger>
+          <TabsTrigger value="promos" className="flex-1">Promos 🏷️</TabsTrigger>
         </TabsList>
         <TabsContent value="dashboard" className="mt-4">
           <Dashboard />
@@ -1049,6 +1405,9 @@ export default function Admin() {
         </TabsContent>
         <TabsContent value="payments" className="mt-4">
           <PaymentsAdmin />
+        </TabsContent>
+        <TabsContent value="promos" className="mt-4">
+          <PromosAdmin />
         </TabsContent>
       </Tabs>
     </StoreLayout>

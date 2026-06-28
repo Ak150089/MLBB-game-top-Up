@@ -4,7 +4,7 @@ import { getLoginUrl } from "@/const";
 import { useLang } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
-import { Gamepad2, History, Home, LogOut, Shield, Sparkles, Trophy, Wallet } from "lucide-react";
+import { Gamepad2, HeadphonesIcon, History, Home, LogOut, MessageCircle, Shield, Sparkles, Trophy, User, Wallet } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 
@@ -40,9 +40,9 @@ function BrandLogo() {
   return (
     <Link href="/" className="flex items-center gap-2">
       {data?.logoUrl ? (
-        <img src={data.logoUrl} alt={brandName} className="size-8 rounded-xl object-cover glow-primary" />
+        <img src={data.logoUrl} alt={brandName} className="size-8 lg:size-10 rounded-xl object-cover glow-primary" />
       ) : (
-        <span className="grid size-8 place-items-center rounded-xl bg-gradient-to-br from-primary to-accent font-bold text-white glow-primary">
+        <span className="grid size-8 lg:size-10 place-items-center rounded-xl bg-gradient-to-br from-primary to-accent font-bold text-white glow-primary">
           <Gamepad2 className="size-4" />
         </span>
       )}
@@ -66,7 +66,7 @@ function StoreFooter() {
   const email = data?.contactEmail || "shineaker@gmail.com";
   const year = new Date().getFullYear();
   return (
-    <footer className="mx-auto w-full max-w-2xl px-4 pb-24 pt-2">
+    <footer className="mx-auto w-full px-4 pb-24 pt-2">
       <div className="rounded-2xl border border-border bg-card/40 px-4 py-5 text-center">
         <div className="flex items-center justify-center gap-2">
           <span className="grid size-7 place-items-center rounded-lg bg-gradient-to-br from-primary to-accent text-white">
@@ -97,7 +97,7 @@ export default function StoreLayout({ children }: { children: ReactNode }) {
     <div className="min-h-screen flex flex-col">
       {/* Top bar */}
       <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-xl">
-        <div className="mx-auto flex h-14 max-w-2xl items-center justify-between px-4">
+        <div className="mx-auto flex h-14 items-center justify-between px-4">
           <BrandLogo />
           <div className="flex items-center gap-2">
             <LangToggle />
@@ -110,14 +110,10 @@ export default function StoreLayout({ children }: { children: ReactNode }) {
               </Link>
             )}
             {isAuthenticated ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 gap-1 px-2 text-muted-foreground"
-                onClick={() => logout()}
+              <><Link href="/profile"><Button variant="ghost" size="sm" className="h-8 w-8 px-0 text-foreground"><User className="size-5" /></Button></Link><Button variant="ghost" size="sm" className="h-8 gap-1 px-2 text-muted-foreground" onClick={() => logout()}
               >
                 <LogOut className="size-4" />
-              </Button>
+              </Button></>
             ) : (
               <a href={getLoginUrl()}>
                 <Button size="sm" className="h-8 bg-gradient-to-r from-primary to-accent font-semibold">
@@ -127,17 +123,43 @@ export default function StoreLayout({ children }: { children: ReactNode }) {
             )}
           </div>
         </div>
+        {/* Category tabs */}
+        <div className="border-t border-border/50 bg-background/95">
+          <div className="mx-auto flex h-12 items-center gap-2 overflow-x-auto px-4 scrollbar-none md:gap-4 md:px-8">
+            {[
+              { href: "/", label: "🏠 Home" },
+              { href: "/?cat=popular", label: "🎮 Game" },
+              { href: "/rank-boost", label: "🏆 Rank Boost" },
+              { href: "/game-accounts", label: "💼 Game Acc" },
+              { href: "/?cat=premium", label: "✨ Premium" },
+              { href: "/help", label: "🏥 Help" },
+            ].map(item => (
+              <a
+                key={item.href}
+                href={item.href}
+                className={[
+                  "flex shrink-0 items-center rounded-xl px-4 py-2 text-sm font-bold transition-all md:px-6 md:text-base",
+                  (typeof window !== "undefined" && (window.location.pathname + window.location.search) === item.href)
+                    ? "bg-gradient-to-r from-primary to-accent text-white shadow-md"
+                    : "text-muted-foreground hover:bg-accent/15 hover:text-foreground",
+                ].join(" ")}
+              >
+                {item.label}
+              </a>
+            ))}
+          </div>
+        </div>
       </header>
 
       {/* Content */}
-      <main className="mx-auto w-full max-w-2xl flex-1 px-4 pb-28 pt-5">{children}</main>
+      <main className="mx-auto w-full flex-1 px-4 pb-28 pt-5">{children}</main>
 
       {/* Footer */}
       <StoreFooter />
 
       {/* Bottom mobile nav */}
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/90 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-2xl items-stretch justify-around px-2 py-1.5">
+        <div className="mx-auto flex items-stretch justify-around px-2 py-1.5">
           {navItems.map(item => {
             const active = location === item.path;
             const Icon = item.icon;
