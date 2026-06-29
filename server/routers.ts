@@ -7,6 +7,7 @@ import { systemRouter } from "./_core/systemRouter";
 import { adminProcedure, protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { ksToTon } from "./_core/priceConversion";
 import { verifyTonPaymentByMemo } from "./_core/tonPayment";
+import { istarBuyPremium, istarBuyStars, istarGetBalance } from "./_core/telegramPremium";
 import * as db from "./db";
 import { storagePut } from "./storage";
 
@@ -186,6 +187,38 @@ export const appRouter = router({
             `Top-up: ${product.name} ${pkg.label}`,
             res.id,
           );
+
+          // Auto-deliver Telegram Premium/Stars via iStar API
+          if (input.gameUserId && product.name.toLowerCase().includes("telegram")) {
+            try {
+              const label = pkg.label.toLowerCase();
+              if (label.includes("stars")) {
+                const match = label.match(/[0-9]+/);
+                const qty = match ? parseInt(match[0]) : 100;
+                const result = await istarBuyStars(input.gameUserId, qty);
+                if (result?.order_id || result?.status === "pending") {
+                  await db.setOrderStatus(res.id, "completed", `Auto-delivered ${qty} Stars via iStar`);
+                  notifyOwner({ title: "✅ Stars Auto-Delivered!", content: `⭐ ${qty} Stars → ${input.gameUserId}` }).catch(() => {});
+                }
+              } else {
+                const months = label.includes("12") ? 12 : label.includes("6") ? 6 : 3;
+                const result = await istarBuyPremium(input.gameUserId, months as 3|6|12);
+                if (result?.order_id || result?.status === "pending") {
+                  await db.setOrderStatus(res.id, "completed", `Auto-delivered Premium ${months}m via iStar`);
+                  notifyOwner({ title: "✅ Premium Auto-Delivered!", content: `💎 Premium ${months}m → ${input.gameUserId}` }).catch(() => {});
+                }
+              }
+            } catch (e: any) {
+              console.error("iStar auto-deliver failed:", e);
+              notifyOwner({ title: "⚠️ Auto-Deliver Failed!", content: `Order #${res.id} — ${product.name} ${pkg.label}\n👤 ${input.gameUserId}\n❌ ${e?.message ?? "iStar error"}\n💡 iStar balance စစ်ပါ` }).catch(() => {});
+            }
+          }
+
+          // Auto-deliver stocked items
+          const credentials = await db.deliverStockItem(product.id, res.id);
+          if (credentials) {
+            await db.setOrderStatus(res.id, "completed", "Auto-delivered from stock");
+          }
         }
 
         notifyOwner({
@@ -327,7 +360,24 @@ export const appRouter = router({
               method: "POST",
               headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY!, "anthropic-version": "2023-06-01" },
               body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1024,
-                system: "You are a support agent for gamingitem-mm.shop, a Myanmar game top-up shop. Reply in Burmese (Myanmar language). Be helpful, friendly and concise. Help with orders, deposits, top-ups, and payments.",
+                system: `You are a support agent for gamingitem-mm.shop, a Myanmar game top-up shop. Reply in Burmese (Myanmar language). Be helpful, friendly and concise.
+
+You can help with:
+- Game top-up orders, deposits, payments
+- Rank Boost Service (MLBB, HOK, Genshin, WW) — order tracking by #RB number
+- Game Account listings
+- Stock items and digital product delivery
+
+When user mentions an order number like #RB1001 or #1001:
+- Tell them their order is being reviewed by admin
+- Status flow: New → Review → Quotation → Payment → Booster Assigned → In Progress → Completed → Delivered
+- Advise them to wait for admin response or contact via this chat
+
+Service pricing:
+MLBB: Warrior→Mythical Immortal cumulative pricing starting from 7,000 Ks per tier
+HOK: Bronze→King cumulative pricing starting from 7,000 Ks per tier  
+Genshin: Daily Package 22,000 Ks / Exploration per region 8,500-17,000 Ks
+WW: Region Exploration 7,000 Ks / Events 4,000-8,000 Ks`,
                 messages: msgs }),
             });
             const data = await res.json();
@@ -500,6 +550,35 @@ export const appRouter = router({
         await db.updateGameAccountListing(id, data as any);
         return { success: true };
       }),
+  }),
+
+  googleReview: router({
+    submit: protectedProcedure
+      .input(z.object({ screenshotUrl: z.string().min(1) }))
+      .mutation(async ({ ctx, input }) => {
+        const existing = await db.getGoogleReviewByUser(ctx.user.id);
+        if (existing && existing.status === "approved") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "ရပြီးသား — Ticket ရပြီ!" });
+        }
+        await db.createGoogleReviewSubmission(ctx.user.id, input.screenshotUrl);
+        notifyOwner({ title: "🌟 Google Review Submission!", content: `User: ${ctx.user.name ?? ctx.user.id}\nScreenshot: ${input.screenshotUrl}` }).catch(() => {});
+        return { success: true };
+      }),
+    myStatus: protectedProcedure.query(({ ctx }) => db.getGoogleReviewByUser(ctx.user.id)),
+    adminList: adminProcedure.query(() => db.listGoogleReviewSubmissions()),
+    adminApprove: adminProcedure
+      .input(z.object({ id: z.number().int(), userId: z.number().int(), status: z.enum(["approved","rejected"]), adminNote: z.string().optional() }))
+      .mutation(async ({ input }) => {
+        await db.updateGoogleReviewStatus(input.id, input.status, input.adminNote);
+        if (input.status === "approved") {
+          await db.addSpinTicket(input.userId, 1);
+        }
+        return { success: true };
+      }),
+    getReviewUrl: publicProcedure.query(async () => {
+      const settings = await db.getSiteSettings();
+      return { url: (settings as any).googleReviewUrl ?? "" };
+    }),
   }),
 
   /* ----------------------------- Balance / Wallet ----------------------------- */
@@ -996,6 +1075,36 @@ export const appRouter = router({
         return { success: true };
       }),
 
+    // iStar Telegram Premium/Stars delivery
+    deliverTelegramPremium: adminProcedure
+      .input(z.object({
+        orderId: z.number().int(),
+        username: z.string().min(1),
+        months: z.union([z.literal(3), z.literal(6), z.literal(12)]),
+      }))
+      .mutation(async ({ input }) => {
+        const result = await istarBuyPremium(input.username, input.months);
+        if (result?.status === "pending" || result?.order_id) {
+          await db.setOrderStatus(input.orderId, "completed", `Telegram Premium ${input.months}m delivered via iStar`);
+          return { success: true, orderId: result.order_id };
+        }
+        throw new Error(result?.message ?? "Delivery failed");
+      }),
+    deliverTelegramStars: adminProcedure
+      .input(z.object({
+        orderId: z.number().int(),
+        username: z.string().min(1),
+        quantity: z.number().int().min(50),
+      }))
+      .mutation(async ({ input }) => {
+        const result = await istarBuyStars(input.username, input.quantity);
+        if (result?.status === "pending" || result?.order_id) {
+          await db.setOrderStatus(input.orderId, "completed", `Telegram Stars ${input.quantity} delivered via iStar`);
+          return { success: true, orderId: result.order_id };
+        }
+        throw new Error(result?.message ?? "Delivery failed");
+      }),
+    istarBalance: adminProcedure.query(() => istarGetBalance()),
     deletePaymentAccount: adminProcedure
       .input(z.object({ id: z.number().int() }))
       .mutation(async ({ input }) => {

@@ -218,13 +218,30 @@ export default function ProductDetail() {
       <div className="mt-6 space-y-4 rounded-2xl border border-border bg-card p-4">
         {product.needsUserId && (
           <div className="space-y-1.5">
-            <Label>{t("product.gameUserId")}</Label>
+            <Label>
+              {product.category === "premium"
+                ? "📱 Telegram Username / Phone Number"
+                : product.category === "social"
+                ? "📧 Email / Username"
+                : t("product.gameUserId")}
+            </Label>
             <Input
               value={gameUserId}
               onChange={e => setGameUserId(e.target.value)}
-              placeholder="123456789"
+              placeholder={
+                product.category === "premium"
+                  ? "@username သို့မဟုတ် +959xxxxxxx"
+                  : product.category === "social"
+                  ? "email@example.com"
+                  : "123456789"
+              }
               className="bg-background/50"
             />
+            {product.category === "premium" && (
+              <p className="text-[11px] text-muted-foreground">
+                ⚠️ Telegram username သို့မဟုတ် phone number ထည့်ပါ (account login မလို)
+              </p>
+            )}
           </div>
         )}
         {product.needsServerId && (

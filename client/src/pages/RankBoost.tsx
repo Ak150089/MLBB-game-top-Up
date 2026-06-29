@@ -166,12 +166,13 @@ export default function RankBoost() {
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
   const [selectedAddons, setSelectedAddons] = useState<string[]>([]);
   const [submitted, setSubmitted] = useState(false);
+  const [orderId, setOrderId] = useState<number|null>(null);
   const [showMyOrders, setShowMyOrders] = useState(false);
   const [form, setForm] = useState({ uid:"", serverId:"", currentRank:"", targetRank:"", currentStars:"", adventureRank:"", contact:"", accountNote:"", screenshotUrl:"" });
 
   const { data: myOrders } = trpc.rankBoost.myOrders.useQuery(undefined, { enabled: isAuthenticated && showMyOrders });
   const createMut = trpc.rankBoost.create.useMutation({
-    onSuccess: () => { setSubmitted(true); toast.success("Order တင်ပြီ! Admin မှ စစ်ဆေးပြီး ဆက်သွယ်ပါမည်"); },
+    onSuccess: (res) => { setSubmitted(true); setOrderId(res.id); toast.success("Order တင်ပြီ! Admin မှ စစ်ဆေးပြီး ဆက်သွယ်ပါမည်"); },
     onError: e => toast.error(e.message),
   });
 
@@ -449,12 +450,36 @@ export default function RankBoost() {
             )}
           </>
         ) : (
-          <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-6 text-center space-y-3">
+          <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-6 text-center space-y-4">
             <div className="text-5xl">✅</div>
             <h3 className="font-bold text-lg text-emerald-400">Order တင်ပြီးပါပြီ!</h3>
-            <p className="text-sm text-muted-foreground">Admin မှ စစ်ဆေးပြီး price quote ပေးပါမည်</p>
-            <p className="text-xs text-muted-foreground">Telegram: @ShineAker</p>
-            <button onClick={() => { setSubmitted(false); setSelectedServices([]); }} className="text-xs text-primary underline">နောက်ထပ် Order တင်မည်</button>
+
+            {/* Order number badge */}
+            {orderId && (
+              <div className="rounded-2xl border border-primary/30 bg-primary/10 px-4 py-3 space-y-1">
+                <p className="text-xs text-muted-foreground">သင့် Order အမှတ်စဉ်</p>
+                <p className="font-mono text-2xl font-extrabold text-primary">#RB{orderId}</p>
+                <p className="text-xs text-muted-foreground">Chat မှာ ဒီ နံပါတ် ပြောပါ</p>
+              </div>
+            )}
+
+            <div className="space-y-2 text-sm text-muted-foreground">
+              <p>Admin မှ စစ်ဆေးပြီး price quote ပေးပါမည်</p>
+            </div>
+
+            {/* Chat button */}
+            {orderId && (
+              <a
+                href={"/help?ref=RB" + orderId + "&mode=admin"}
+                className="flex items-center justify-center gap-2 w-full rounded-xl bg-emerald-500/20 border border-emerald-500/30 py-3 text-sm font-bold text-emerald-400 hover:bg-emerald-500/30 transition-all"
+              >
+                💬 Chat မှာ Admin ကို ဆက်သွယ်မည် (#RB{orderId})
+              </a>
+            )}
+
+            <button onClick={() => { setSubmitted(false); setSelectedServices([]); setOrderId(null); }} className="text-xs text-primary underline">
+              နောက်ထပ် Order တင်မည်
+            </button>
           </div>
         )}
       </div>

@@ -161,6 +161,7 @@ export const siteSettings = mysqlTable("siteSettings", {
   contactEmail: varchar("contactEmail", { length: 200 }).default("shineaker@gmail.com").notNull(),
   /** Exchange rate: how many Myanmar Kyat per 1 USD (for TON/Binance deposit conversion). */
   usdToKs: int("usdToKs").default(4500).notNull(),
+  googleReviewUrl: varchar("googleReviewUrl", { length: 200 }),
   adminLastSeenAt: timestamp("adminLastSeenAt"),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

@@ -129,6 +129,10 @@ function OrdersAdmin() {
                   <span className="text-xs text-muted-foreground">{t("admin.noReceipt")}</span>
                 )}
                 <div className="ml-auto flex gap-1.5">
+                  {/* iStar Telegram deliver */}
+                  {o.productName?.toLowerCase().includes("telegram") && o.status !== "completed" && (
+                    <TelegramDeliverBtn order={o} />
+                  )}
                   {o.status !== "processing" && o.status !== "completed" && (
                     <Button
                       size="sm"
@@ -1344,6 +1348,124 @@ function StockManager({ productId, productName }: { productId: number; productNa
     </div>
   );
 }
+
+function TelegramDeliverBtn({ order }: { order: any }) {
+  const [open, setOpen] = useState(false);
+  const [username, setUsername] = useState(order.gameUserId ?? "");
+  const utils = trpc.useUtils();
+  const l = (order.packageLabel ?? "").toLowerCase();
+  const isStars = l.includes("stars");
+  const getMonths = () => { if (l.includes("12")) return 12; if (l.includes("6")) return 6; return 3; };
+  const getStars = () => { const m = l.match(/[0-9]+/); return m ? parseInt(m[0]) : 100; };
+  const [mode, setMode] = useState<"premium"|"stars">(isStars ? "stars" : "premium");
+  const [months, setMonths] = useState<3|6|12>(getMonths());
+  const [stars, setStars] = useState(getStars());
+  const { data: balance } = trpc.admin.istarBalance.useQuery(undefined, { enabled: open });
+  const premiumMut = trpc.admin.deliverTelegramPremium.useMutation({
+    onSuccess: () => { toast.success("Telegram Premium delivered!"); setOpen(false); utils.admin.orders.invalidate(); },
+    onError: e => toast.error("Error: " + e.message),
+  });
+  const starsMut = trpc.admin.deliverTelegramStars.useMutation({
+    onSuccess: () => { toast.success("Telegram Stars delivered!"); setOpen(false); utils.admin.orders.invalidate(); },
+    onError: e => toast.error("Error: " + e.message),
+  });
+  return (
+    <>
+      <Button size="sm" className="h-8 gap-1 bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 border border-blue-500/30 text-xs" onClick={() => setOpen(true)}>
+        ✈️ Deliver
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>✈️ Telegram Delivery — #{order.id}</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            {balance && (
+              <div className="rounded-xl bg-primary/5 border border-primary/20 px-3 py-2 text-xs">
+                💰 iStar Balance: <span className="font-bold text-primary">{(balance as any).balance ?? "—"} {(balance as any).currency ?? "TON"}</span>
+              </div>
+            )}
+            <div className="flex gap-2">
+              <button onClick={() => setMode("premium")} className={"flex-1 rounded-xl border py-2 text-sm font-bold " + (mode==="premium"?"border-primary bg-primary/10 text-primary":"border-border")}>💎 Premium</button>
+              <button onClick={() => setMode("stars")} className={"flex-1 rounded-xl border py-2 text-sm font-bold " + (mode==="stars"?"border-amber-400 bg-amber-400/10 text-amber-400":"border-border")}>⭐ Stars</button>
+            </div>
+            <div>
+              <Label className="text-xs">Telegram Username</Label>
+              <Input className="mt-1" placeholder="@username" value={username} onChange={e => setUsername(e.target.value)} />
+            </div>
+            {mode === "premium" && (
+              <div>
+                <Label className="text-xs">Duration</Label>
+                <div className="mt-1 flex gap-2">
+                  {([3,6,12] as const).map(m => (
+                    <button key={m} onClick={() => setMonths(m)} className={"flex-1 rounded-xl border py-2 text-sm font-bold " + (months===m?"border-primary bg-primary/10 text-primary":"border-border")}>{m} months</button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {mode === "stars" && (
+              <div>
+                <Label className="text-xs">Stars Amount</Label>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {[50,100,250,500,750,1000,1500,2500,5000].map(n => (
+                    <button key={n} onClick={() => setStars(n)} className={"rounded-xl border px-3 py-1.5 text-xs font-bold " + (stars===n?"border-amber-400 bg-amber-400/10 text-amber-400":"border-border")}>{n}</button>
+                  ))}
+                </div>
+                <Input type="number" className="mt-2 h-8 text-xs" value={stars} onChange={e => setStars(parseInt(e.target.value)||50)} />
+              </div>
+            )}
+            <Button
+              onClick={() => { if (mode==="premium") premiumMut.mutate({ orderId:order.id, username, months }); else starsMut.mutate({ orderId:order.id, username, quantity:stars }); }}
+              disabled={!username||premiumMut.isPending||starsMut.isPending}
+              className="w-full bg-gradient-to-r from-primary to-accent font-bold"
+            >
+              {(premiumMut.isPending||starsMut.isPending) ? "Delivering..." : ("Deliver " + (mode==="premium" ? months+"m Premium" : stars+" Stars"))}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+
+function GoogleReviewAdmin() {
+  const { data: submissions, refetch } = trpc.googleReview.adminList.useQuery();
+  const approveMut = trpc.googleReview.adminApprove.useMutation({ onSuccess: () => refetch() });
+
+  return (
+    <div className="space-y-3">
+      <h2 className="font-display text-lg font-bold">🌟 Google Review Submissions</h2>
+      {!submissions || submissions.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-border py-12 text-center text-sm text-muted-foreground">Submissions မရှိသေး</div>
+      ) : submissions.map((sub: any) => (
+        <div key={sub.id} className="rounded-2xl border border-border bg-card p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-bold text-sm">{sub.userName ?? "User #"+sub.userId}</p>
+              <p className="text-xs text-muted-foreground">{sub.userEmail} · {new Date(sub.createdAt).toLocaleDateString()}</p>
+            </div>
+            <span className={`text-xs font-bold uppercase ${sub.status==="approved"?"text-emerald-400":sub.status==="rejected"?"text-destructive":"text-amber-400"}`}>{sub.status}</span>
+          </div>
+          <a href={sub.screenshotUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline break-all">
+            📸 {sub.screenshotUrl}
+          </a>
+          {sub.status === "pending" && (
+            <div className="flex gap-2">
+              <Button size="sm" className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-xs h-8"
+                onClick={() => approveMut.mutate({ id: sub.id, userId: sub.userId, status: "approved" })}>
+                ✅ Approve (+🎟️ Ticket)
+              </Button>
+              <Button size="sm" variant="destructive" className="flex-1 text-xs h-8"
+                onClick={() => approveMut.mutate({ id: sub.id, userId: sub.userId, status: "rejected" })}>
+                ❌ Reject
+              </Button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function Admin() {
   const { t } = useLang();
   const { user, loading } = useAuth();

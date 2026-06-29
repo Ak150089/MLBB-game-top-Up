@@ -94,6 +94,72 @@ function MyCouponsSection() {
   );
 }
 
+
+function GoogleReviewSection() {
+  const { data: reviewUrl } = trpc.googleReview.getReviewUrl.useQuery();
+  const { data: myStatus, refetch } = trpc.googleReview.myStatus.useQuery();
+  const [screenshotUrl, setScreenshotUrl] = useState("");
+  const [showForm, setShowForm] = useState(false);
+
+  const submitMut = trpc.googleReview.submit.useMutation({
+    onSuccess: () => { toast.success("တင်ပြီ! Admin စစ်ဆေးပြီး Ticket ပေးပါမည်"); refetch(); setShowForm(false); },
+    onError: e => toast.error(e.message),
+  });
+
+  if (myStatus?.status === "approved") return (
+    <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-center space-y-1">
+      <div className="text-2xl">✅</div>
+      <p className="font-bold text-emerald-400">Google Review တင်ပြီး Ticket ရပြီ!</p>
+      <p className="text-xs text-muted-foreground">ကျေးဇူးတင်ပါသည် 🙏</p>
+    </div>
+  );
+
+  if (myStatus?.status === "pending") return (
+    <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-center space-y-1">
+      <div className="text-2xl">⏳</div>
+      <p className="font-bold text-amber-400">Admin စစ်ဆေးနေသည်</p>
+      <p className="text-xs text-muted-foreground">မကြာမီ Spin Ticket ရပါမည်</p>
+    </div>
+  );
+
+  return (
+    <div className="rounded-2xl border border-border bg-card p-4 space-y-4">
+      <div className="flex items-center gap-3">
+        <span className="text-3xl">🌟</span>
+        <div>
+          <p className="font-bold">Google Review တင်ပြီး Ticket ရပါ</p>
+          <p className="text-xs text-muted-foreground">Review တင်ပြီး screenshot upload → Admin approve → 🎟️ Spin Ticket</p>
+        </div>
+      </div>
+
+      {!showForm ? (
+        <div className="space-y-2">
+          {reviewUrl?.url && (
+            <a href={reviewUrl.url} target="_blank" rel="noreferrer"
+              className="flex items-center justify-center gap-2 w-full rounded-xl bg-blue-500/20 border border-blue-500/30 py-3 text-sm font-bold text-blue-400 hover:bg-blue-500/30 transition-all">
+              🌐 Google မှာ Review တင်မည်
+            </a>
+          )}
+          <button onClick={() => setShowForm(true)}
+            className="flex items-center justify-center gap-2 w-full rounded-xl bg-emerald-500/20 border border-emerald-500/30 py-2.5 text-sm font-bold text-emerald-400 hover:bg-emerald-500/30 transition-all">
+            📸 Screenshot တင်မည်
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">Review screenshot ကို Google Drive / Telegram မှာ upload ပြီး link ထည့်ပါ</p>
+          <Input placeholder="https://drive.google.com/..." value={screenshotUrl} onChange={e => setScreenshotUrl(e.target.value)} />
+          <div className="flex gap-2">
+            <Button onClick={() => setShowForm(false)} variant="outline" className="flex-1">Cancel</Button>
+            <Button onClick={() => submitMut.mutate({ screenshotUrl })} disabled={!screenshotUrl.trim() || submitMut.isPending} className="flex-1 bg-gradient-to-r from-primary to-accent font-bold">
+              {submitMut.isPending ? "တင်နေသည်..." : "Submit"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 export default function Profile() {
   const { t, lang, setLang } = useLang();
   const { user, isAuthenticated, loading, logout } = useAuth();
@@ -269,6 +335,7 @@ export default function Profile() {
       <section className="mt-6">
         <h3 className="mb-2 font-display text-base font-bold">👥 Referral</h3>
         <ReferralSection />
+      <GoogleReviewSection />
       </section>
 
       <section className="mt-6">

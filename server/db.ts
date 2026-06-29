@@ -921,3 +921,43 @@ export async function updateGameAccountListing(id: number, data: Partial<InsertG
   if (!db) throw new Error("DB unavailable");
   await db.update(gameAccountListings).set(data).where(eq(gameAccountListings.id, id));
 }
+
+/* ---- Google Review Submissions ---- */
+export async function createGoogleReviewSubmission(userId: number, screenshotUrl: string) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const [res] = await db.execute(
+    `INSERT INTO googleReviewSubmissions (userId, screenshotUrl) VALUES (?, ?)
+     ON DUPLICATE KEY UPDATE screenshotUrl = VALUES(screenshotUrl), status = 'pending'`,
+    [userId, screenshotUrl]
+  );
+  return res;
+}
+export async function listGoogleReviewSubmissions() {
+  const db = await getDb();
+  if (!db) return [];
+  const [rows] = await db.execute(
+    `SELECT g.*, u.name as userName, u.email as userEmail 
+     FROM googleReviewSubmissions g 
+     JOIN users u ON u.id = g.userId 
+     ORDER BY g.createdAt DESC`
+  );
+  return rows as any[];
+}
+export async function updateGoogleReviewStatus(id: number, status: string, adminNote?: string) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.execute(
+    `UPDATE googleReviewSubmissions SET status = ?, adminNote = ? WHERE id = ?`,
+    [status, adminNote ?? null, id]
+  );
+}
+export async function getGoogleReviewByUser(userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [rows] = await db.execute(
+    `SELECT * FROM googleReviewSubmissions WHERE userId = ?`,
+    [userId]
+  );
+  return (rows as any[])[0] ?? null;
+}

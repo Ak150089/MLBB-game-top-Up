@@ -32,6 +32,19 @@ export default function Help() {
   const { isAuthenticated } = useAuth();
   const [mode, setMode] = useState<Mode>("select");
   const [input, setInput] = useState("");
+
+  // Auto-detect URL params: ?ref=RB1001&mode=admin
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ref = params.get("ref");
+    const urlMode = params.get("mode") as Mode | null;
+    if (urlMode === "admin" || urlMode === "ai") {
+      setMode(urlMode);
+    }
+    if (ref) {
+      setInput(`Order #${ref} အကြောင်း မေးမြန်းလိုသည်`);
+    }
+  }, []);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const { data: messages, refetch } = trpc.support.myMessages.useQuery(undefined, { enabled: isAuthenticated && mode !== "select", refetchInterval: mode === "admin" ? 5000 : false });
