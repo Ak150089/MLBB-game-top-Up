@@ -125,7 +125,30 @@ export default function StoreLayout({ children }: { children: ReactNode }) {
         </div>
         {/* Category tabs */}
         <div className="border-t border-border/50 bg-background/95">
-          <div className="mx-auto flex h-12 items-center gap-2 overflow-x-auto px-4 scrollbar-none md:gap-4 md:px-8">
+          {/* Mobile only: full-width icon+label */}
+          <div className="flex h-11 items-stretch px-1 md:hidden">
+            {[
+              { href: "/", emoji: "🏠", label: "Home" },
+              { href: "/?cat=popular", emoji: "🎮", label: "Game" },
+              { href: "/rank-boost", emoji: "🏆", label: "Boost" },
+              { href: "/game-accounts", emoji: "💼", label: "Acc" },
+              { href: "/?cat=premium", emoji: "✨", label: "Premium" },
+              { href: "/help", emoji: "🏥", label: "Help" },
+            ].map(item => {
+              const isActive = typeof window !== "undefined" && (window.location.pathname + window.location.search) === item.href;
+              return (
+                <a key={item.href} href={item.href}
+                  className={["flex flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-1 text-[9px] font-bold transition-all",
+                    isActive ? "bg-gradient-to-b from-primary/20 to-primary/5 text-primary" : "text-muted-foreground hover:text-foreground",
+                  ].join(" ")}>
+                  <span className="text-base leading-none">{item.emoji}</span>
+                  <span>{item.label}</span>
+                </a>
+              );
+            })}
+          </div>
+          {/* Desktop: original style */}
+          <div className="mx-auto hidden h-12 items-center gap-2 overflow-x-auto px-4 scrollbar-none md:flex md:gap-4 md:px-8">
             {[
               { href: "/", label: "🏠 Home" },
               { href: "/?cat=popular", label: "🎮 Game" },
@@ -134,23 +157,17 @@ export default function StoreLayout({ children }: { children: ReactNode }) {
               { href: "/?cat=premium", label: "✨ Premium" },
               { href: "/help", label: "🏥 Help" },
             ].map(item => (
-              <a
-                key={item.href}
-                href={item.href}
-                className={[
-                  "flex shrink-0 items-center rounded-xl px-4 py-2 text-sm font-bold transition-all md:px-6 md:text-base",
+              <a key={item.href} href={item.href}
+                className={["flex shrink-0 items-center rounded-xl px-4 py-2 text-sm font-bold transition-all md:px-6 md:text-base",
                   (typeof window !== "undefined" && (window.location.pathname + window.location.search) === item.href)
                     ? "bg-gradient-to-r from-primary to-accent text-white shadow-md"
                     : "text-muted-foreground hover:bg-accent/15 hover:text-foreground",
-                ].join(" ")}
-              >
-                {item.label}
-              </a>
+                ].join(" ")}>{item.label}</a>
             ))}
           </div>
         </div>
-      </header>
 
+      </header>
       {/* Content */}
       <main className="mx-auto w-full flex-1 px-4 pb-28 pt-5">{children}</main>
 

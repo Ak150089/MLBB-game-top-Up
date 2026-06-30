@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { trpc } from "@/lib/trpc";
 import type { Package } from "@shared/types";
 import { ArrowLeft, Check, Copy, ImageUp, Loader2, Wallet } from "lucide-react";
+import PackageGrid from "@/components/PackageGrid";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Link, useLocation, useRoute } from "wouter";
@@ -64,6 +65,7 @@ export default function ProductDetail() {
   const balanceKs = balanceData?.balanceKs ?? 0;
 
   const [selected, setSelected] = useState<Package | null>(null);
+  const orderFormRef = useRef<HTMLDivElement>(null);
   const [gameUserId, setGameUserId] = useState("");
   const [gameServerId, setGameServerId] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("");
@@ -180,42 +182,30 @@ export default function ProductDetail() {
         </div>
       </div>
 
-      {/* Packages */}
-      <h2 className="mb-2 mt-5 font-display text-base font-bold">{t("product.choosePackage")}</h2>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {packages.map(pkg => {
-          const active = selected?.id === pkg.id;
-          return (
-            <button
-              key={pkg.id}
-              onClick={() => setSelected(pkg)}
-              className={cn(
-                "press relative flex flex-col items-start gap-1 rounded-xl border p-3 text-left transition-colors",
-                active
-                  ? "border-primary bg-primary/10 ring-1 ring-primary"
-                  : "border-border bg-card hover:border-primary/40",
-              )}
-            >
-              {pkg.isPopular && (
-                <span className="absolute right-1.5 top-1.5 rounded-full bg-gold/20 px-1.5 py-0.5 text-[8px] font-bold text-gold">
-                  {t("product.popular")}
-                </span>
-              )}
-              {active && (
-                <span className="absolute right-1.5 top-1.5 grid size-4 place-items-center rounded-full bg-primary text-white">
-                  <Check className="size-3" />
-                </span>
-              )}
-              <span className="text-sm font-semibold leading-tight">{pkg.label}</span>
-              {pkg.bonusLabel && <span className="text-[10px] font-bold text-gold">{pkg.bonusLabel}</span>}
-              <span className="mt-0.5 text-sm font-extrabold text-primary">{formatKs(pkg.priceKs)}</span>
-            </button>
-          );
-        })}
-      </div>
+      {/* Packages — lootbar style */}
+      <h2 className="mb-3 mt-5 font-display text-base font-bold">{t("product.choosePackage")}</h2>
+      <PackageGrid packages={packages} selected={selected} onSelect={setSelected} />
+
+      {/* Sticky selected package bar */}
+      {selected && (
+        <div className="fixed inset-x-0 bottom-16 z-30 px-3 pb-2">
+          <button
+            onClick={() => orderFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+            className="mx-auto flex w-full max-w-lg items-center gap-3 rounded-2xl border border-primary/40 bg-background/95 px-4 py-3 shadow-2xl shadow-primary/20 backdrop-blur-xl"
+          >
+            <div className="min-w-0 flex-1 text-left">
+              <div className="truncate text-[11px] font-semibold text-muted-foreground">{selected.label}</div>
+              <div className="text-sm font-extrabold text-primary">{formatKs(selected.priceKs)}</div>
+            </div>
+            <span className="shrink-0 rounded-xl bg-gradient-to-r from-primary to-accent px-4 py-2 text-xs font-bold text-white">
+              ဆက်လုပ်မည် ↓
+            </span>
+          </button>
+        </div>
+      )}
 
       {/* Order form */}
-      <div className="mt-6 space-y-4 rounded-2xl border border-border bg-card p-4">
+      <div ref={orderFormRef} className="mt-6 space-y-4 rounded-2xl border border-border bg-card p-4">
         {product.needsUserId && (
           <div className="space-y-1.5">
             <Label>
