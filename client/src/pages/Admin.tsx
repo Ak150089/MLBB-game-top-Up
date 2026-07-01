@@ -1187,45 +1187,130 @@ function DepositsAdmin() {
 function RankBoostAdmin() {
   const { data: orders, refetch } = trpc.rankBoost.adminList.useQuery();
   const updateMut = trpc.rankBoost.adminUpdate.useMutation({ onSuccess: () => refetch() });
-  const statusColors: Record<string,string> = { pending:"text-amber-400", processing:"text-blue-400", completed:"text-emerald-400", rejected:"text-destructive" };
+  const [expanded, setExpanded] = useState<number | null>(null);
+  const [form, setForm] = useState<Record<number, any>>({});
+
+  const STATUS_FLOW = [
+    { key:"new", label:"New", color:"text-blue-400" },
+    { key:"review", label:"Review", color:"text-amber-400" },
+    { key:"quotation", label:"Quoted", color:"text-purple-400" },
+    { key:"payment_received", label:"Paid", color:"text-emerald-400" },
+    { key:"booster_assigned", label:"Assigned", color:"text-cyan-400" },
+    { key:"in_progress", label:"In Progress", color:"text-orange-400" },
+    { key:"completed", label:"Completed", color:"text-green-400" },
+    { key:"delivered", label:"Delivered", color:"text-green-500" },
+    { key:"closed", label:"Closed", color:"text-muted-foreground" },
+  ];
+  const STATUS_NEXT: Record<string,string> = {
+    new:"review", review:"quotation", quotation:"payment_received",
+    payment_received:"booster_assigned", booster_assigned:"in_progress",
+    in_progress:"completed", completed:"delivered", delivered:"closed",
+  };
+  function getForm(id: number) { return form[id] ?? {}; }
+  function setF(id: number, k: string, v: any) { setForm(f => ({ ...f, [id]: { ...getForm(id), [k]: v } })); }
 
   return (
     <div className="space-y-3">
       <h2 className="font-display text-lg font-bold">🏆 Rank Boost Orders</h2>
       {!orders || orders.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-border py-12 text-center text-sm text-muted-foreground">Orders မရှိသေး</div>
-      ) : orders.map((o: any) => (
-        <div key={o.id} className="rounded-2xl border border-border bg-card p-4 space-y-2">
-          <div className="flex items-center justify-between">
-            <div>
-              <span className="font-bold">{o.gameType}</span>
-              <span className="mx-2 text-muted-foreground">—</span>
-              <span className="text-sm">{o.currentRank} → {o.targetRank}</span>
-            </div>
-            <span className={`text-xs font-bold uppercase ${statusColors[o.status]}`}>{o.status}</span>
+      ) : orders.map((o: any) => {
+        const statusInfo = STATUS_FLOW.find(s => s.key === o.status);
+        const statusIdx = STATUS_FLOW.findIndex(s => s.key === o.status);
+        const isOpen = expanded === o.id;
+        const f = getForm(o.id);
+        return (
+          <div key={o.id} className="rounded-2xl border border-border bg-card overflow-hidden">
+            <button className="w-full p-4 text-left" onClick={() => setExpanded(isOpen ? null : o.id)}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-bold text-sm">#{o.id}</span>
+                  <span className="font-bold">{o.gameType?.toUpperCase()}</span>
+                  {o.serviceType === "rank_boost" && o.currentRank && (
+                    <span className="text-xs text-muted-foreground">{o.currentRank} → {o.targetRank}</span>
+                  )}
+                  {o.serviceType === "progression" && <span className="text-xs text-amber-400">Progression</span>}
+                  <span className="text-xs text-muted-foreground">· {o.boostType}</span>
+                </div>
+                <span className={"text-[11px] font-bold uppercase " + (statusInfo?.color ?? "text-muted-foreground")}>{statusInfo?.label ?? o.status}</span>
+              </div>
+              <div className="mt-2 flex gap-0.5">
+                {STATUS_FLOW.slice(0,8).map((s,i) => (
+                  <div key={s.key} className={"h-1 flex-1 rounded-full " + (i <= statusIdx ? "bg-primary" : "bg-muted")} />
+                ))}
+              </div>
+              <div className="mt-1.5 flex items-center gap-3 text-[11px] text-muted-foreground">
+                <span>User #{o.userId}</span>
+                {o.uid && <span>UID: {o.uid}</span>}
+                {o.contact && <span>📞 {o.contact}</span>}
+                {o.quotedPriceKs && <span className="text-primary font-bold">{o.quotedPriceKs.toLocaleString()} Ks</span>}
+              </div>
+            </button>
+            {isOpen && (
+              <div className="border-t border-border p-4 space-y-4">
+                <div className="rounded-xl bg-muted/30 p-3 text-xs space-y-1">
+                  {o.uid && <div>UID: <b>{o.uid}</b>{o.serverId && " · Server: "+o.serverId}</div>}
+                  {o.services && <div>Services: <b>{o.services}</b></div>}
+                  {o.adventureRank && <div>AR/UL: <b>{o.adventureRank}</b></div>}
+                  {o.accountNote && <div>📝 {o.accountNote}</div>}
+                  {o.screenshotUrl && <a href={o.screenshotUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline">📸 Screenshot</a>}
+                  {o.contact && <div>📞 Contact: <b>{o.contact}</b></div>}
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs font-bold">💰 Quotation</Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label className="text-[11px] text-muted-foreground">Full Price (Ks)</Label>
+                      <Input className="mt-0.5 h-8 text-xs" type="number" defaultValue={o.quotedPriceKs ?? ""} placeholder="Total price" onChange={e => setF(o.id, "quotedPriceKs", parseInt(e.target.value)||0)} />
+                    </div>
+                    <div>
+                      <Label className="text-[11px] text-muted-foreground">50% Deposit (Ks)</Label>
+                      <Input className="mt-0.5 h-8 text-xs" type="number" defaultValue={o.depositPriceKs ?? ""} placeholder="Half payment" onChange={e => setF(o.id, "depositPriceKs", parseInt(e.target.value)||0)} />
+                    </div>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs font-bold">🥊 Booster & Progress</Label>
+                  <Input className="h-8 text-xs" placeholder="Booster name" defaultValue={o.boosterName ?? ""} onChange={e => setF(o.id, "boosterName", e.target.value)} />
+                  <Input className="h-8 text-xs" placeholder="Progress note" defaultValue={o.progressNote ?? ""} onChange={e => setF(o.id, "progressNote", e.target.value)} />
+                </div>
+                {o.boostType === "pilot" && (
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold">🔐 Account Info</Label>
+                    <Input className="h-8 text-xs" placeholder="Email / Login" defaultValue={o.accountEmail ?? ""} onChange={e => setF(o.id, "accountEmail", e.target.value)} />
+                    <Input className="h-8 text-xs" placeholder="Password" defaultValue={o.accountPassword ?? ""} onChange={e => setF(o.id, "accountPassword", e.target.value)} />
+                  </div>
+                )}
+                <div>
+                  <Label className="text-xs font-bold">📝 Admin Note</Label>
+                  <Input className="mt-0.5 h-8 text-xs" placeholder="Customer ကို ပြောစရာ..." defaultValue={o.adminNote ?? ""} onChange={e => setF(o.id, "adminNote", e.target.value)} />
+                </div>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <Button size="sm" className="h-8 text-xs bg-gradient-to-r from-primary to-accent" disabled={updateMut.isPending}
+                    onClick={() => updateMut.mutate({ id: o.id, ...f })}>💾 Save</Button>
+                  {STATUS_NEXT[o.status] && (
+                    <Button size="sm" variant="outline" className="h-8 text-xs border-emerald-500/30 text-emerald-400" disabled={updateMut.isPending}
+                      onClick={() => updateMut.mutate({ id: o.id, status: STATUS_NEXT[o.status] as any, ...f })}>
+                      ▶ → {STATUS_FLOW.find(s=>s.key===STATUS_NEXT[o.status])?.label}
+                    </Button>
+                  )}
+                  {o.status !== "rejected" && o.status !== "closed" && (
+                    <Button size="sm" variant="destructive" className="h-8 text-xs" disabled={updateMut.isPending}
+                      onClick={() => updateMut.mutate({ id: o.id, status: "rejected" })}>❌ Reject</Button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
-          <div className="text-xs text-muted-foreground space-y-0.5">
-            <div>💰 {o.priceKs?.toLocaleString()} Ks · User #{o.userId}</div>
-            <div className="font-semibold text-amber-400">📧 {o.accountEmail}</div>
-            <div className="font-mono">🔑 {o.accountPassword}</div>
-            {o.accountNote && <div>📝 {o.accountNote}</div>}
-          </div>
-          <div className="flex gap-2 pt-1">
-            {["processing","completed","rejected"].map(st => (
-              <Button key={st} size="sm" variant={o.status===st?"default":"outline"} className="text-xs h-7"
-                onClick={() => updateMut.mutate({ id: o.id, status: st as any })}>
-                {st==="processing"?"▶ Processing":st==="completed"?"✅ Complete":"❌ Reject"}
-              </Button>
-            ))}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
 
+
 /* ----------------------------- Game Acc Admin ----------------------------- */
-function GameAccAdmin() {
+function GameAccAdmin({ onChatSeller }: { onChatSeller: (userId: number) => void }) {
   const { data: listings, refetch } = trpc.gameAcc.adminList.useQuery();
   const updateMut = trpc.gameAcc.adminUpdate.useMutation({ onSuccess: () => refetch() });
   const [editing, setEditing] = useState<any>(null);
@@ -1258,6 +1343,7 @@ function GameAccAdmin() {
           </div>
           <div className="flex gap-2 pt-1 flex-wrap">
             <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => setEditing(l)}>✏️ Edit & Publish</Button>
+            <Button size="sm" variant="outline" className="text-xs h-7 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10" onClick={() => onChatSeller(l.userId)}>💬 Seller Chat</Button>
             <Button size="sm" variant="outline" className="text-xs h-7 text-emerald-400" onClick={() => updateMut.mutate({ id: l.id, status: "listed" })}>✅ List</Button>
             <Button size="sm" variant="outline" className="text-xs h-7 text-blue-400" onClick={() => updateMut.mutate({ id: l.id, status: "sold" })}>💰 Sold</Button>
             <Button size="sm" variant="outline" className="text-xs h-7 text-destructive" onClick={() => updateMut.mutate({ id: l.id, status: "rejected" })}>❌ Reject</Button>
@@ -1466,9 +1552,83 @@ function GoogleReviewAdmin() {
   );
 }
 
+
+function SupportChatAdmin({ initialUserId }: { initialUserId?: number | null }) {
+  const { data: conversations, refetch: refetchList } = trpc.support.adminList.useQuery();
+  const [selectedUserId, setSelectedUserId] = useState<number | null>(initialUserId ?? null);
+  const { data: messages, refetch } = trpc.support.adminGetMessages.useQuery(
+    { userId: selectedUserId ?? 0 },
+    { enabled: !!selectedUserId, refetchInterval: 5000 }
+  );
+  const [input, setInput] = useState("");
+  const replyMut = trpc.support.adminReply.useMutation({
+    onSuccess: () => { setInput(""); refetch(); refetchList(); },
+  });
+
+  return (
+    <div className="space-y-3">
+      <h2 className="font-display text-lg font-bold">💬 Customer Chat</h2>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {/* Conversation list */}
+        <div className="space-y-1.5 sm:col-span-1">
+          {!conversations || conversations.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border py-8 text-center text-xs text-muted-foreground">Conversations မရှိသေး</div>
+          ) : conversations.map((c: any) => (
+            <button
+              key={c.userId}
+              onClick={() => setSelectedUserId(c.userId)}
+              className={`w-full rounded-xl border px-3 py-2 text-left text-xs transition-all ${selectedUserId === c.userId ? "border-primary bg-primary/10" : "border-border hover:border-primary/40"}`}
+            >
+              <div className="font-bold">{c.userName ?? "User #" + c.userId}</div>
+              <div className="truncate text-muted-foreground">{c.lastMessage ?? ""}</div>
+            </button>
+          ))}
+        </div>
+
+        {/* Chat panel */}
+        <div className="sm:col-span-2">
+          {!selectedUserId ? (
+            <div className="rounded-2xl border border-dashed border-border py-16 text-center text-sm text-muted-foreground">User ရွေးပါ</div>
+          ) : (
+            <div className="flex h-[420px] flex-col rounded-2xl border border-border bg-card">
+              <div className="flex-1 space-y-2 overflow-y-auto p-3">
+                {messages?.map((m: any) => (
+                  <div key={m.id} className={`flex ${m.role === "admin" ? "justify-end" : "justify-start"}`}>
+                    <div className={`max-w-[80%] rounded-xl px-3 py-2 text-xs ${m.role === "admin" ? "bg-primary text-white" : m.role === "user" ? "bg-secondary" : "bg-violet-500/20 text-violet-200"}`}>
+                      {m.content}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2 border-t border-border p-2">
+                <Input
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  placeholder="Reply ရိုက်ပါ..."
+                  onKeyDown={e => { if (e.key === "Enter" && input.trim()) replyMut.mutate({ userId: selectedUserId, content: input.trim() }); }}
+                />
+                <Button
+                  size="sm"
+                  disabled={!input.trim() || replyMut.isPending}
+                  onClick={() => replyMut.mutate({ userId: selectedUserId, content: input.trim() })}
+                  className="bg-gradient-to-r from-primary to-accent"
+                >
+                  ပို့မည်
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Admin() {
   const { t } = useLang();
   const { user, loading } = useAuth();
+  const [chatTargetUserId, setChatTargetUserId] = useState<number | null>(null);
+  const [activeTab, setActiveTab] = useState("dashboard");
 
   if (loading) {
     return (
@@ -1492,7 +1652,7 @@ export default function Admin() {
   return (
     <StoreLayout>
       <h1 className="mb-4 font-display text-xl font-bold">{t("admin.title")}</h1>
-      <Tabs defaultValue="dashboard">
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="flex w-full flex-wrap gap-1 h-auto">
           <TabsTrigger value="dashboard" className="flex-1">{t("admin.dashboard")}</TabsTrigger>
           <TabsTrigger value="orders" className="flex-1">{t("admin.orders")}</TabsTrigger>
@@ -1503,6 +1663,10 @@ export default function Admin() {
           <TabsTrigger value="prizes" className="flex-1">{t("admin.prizes")}</TabsTrigger>
           <TabsTrigger value="payments" className="flex-1">{t("admin.payments")}</TabsTrigger>
           <TabsTrigger value="promos" className="flex-1">Promos 🏷️</TabsTrigger>
+          <TabsTrigger value="rankboost" className="flex-1">🏆 Boost</TabsTrigger>
+          <TabsTrigger value="gameacc" className="flex-1">💼 Game Acc</TabsTrigger>
+          <TabsTrigger value="greview" className="flex-1">🌟 Reviews</TabsTrigger>
+          <TabsTrigger value="chat" className="flex-1">💬 Chat</TabsTrigger>
         </TabsList>
         <TabsContent value="dashboard" className="mt-4">
           <Dashboard />
@@ -1527,6 +1691,18 @@ export default function Admin() {
         </TabsContent>
         <TabsContent value="payments" className="mt-4">
           <PaymentsAdmin />
+        </TabsContent>
+        <TabsContent value="rankboost" className="mt-4">
+          <RankBoostAdmin />
+        </TabsContent>
+        <TabsContent value="gameacc" className="mt-4">
+          <GameAccAdmin onChatSeller={(userId) => { setChatTargetUserId(userId); setActiveTab("chat"); }} />
+        </TabsContent>
+        <TabsContent value="greview" className="mt-4">
+          <GoogleReviewAdmin />
+        </TabsContent>
+        <TabsContent value="chat" className="mt-4">
+          <SupportChatAdmin initialUserId={chatTargetUserId} />
         </TabsContent>
         <TabsContent value="promos" className="mt-4">
           <PromosAdmin />

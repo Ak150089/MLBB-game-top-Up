@@ -5,6 +5,7 @@ import { useLang } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
 import { Gamepad2, HeadphonesIcon, History, Home, LogOut, MessageCircle, Shield, Sparkles, Trophy, User, Wallet } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 
@@ -60,6 +61,54 @@ function BrandLogo() {
   );
 }
 
+
+function useChatNotifications() {
+  const { isAuthenticated } = useAuth();
+  const { data } = trpc.support.notifications.useQuery(undefined, {
+    enabled: isAuthenticated,
+    refetchInterval: 8000,
+  });
+  const prevCount = useRef(0);
+  const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!data) return;
+    const baseTitle = "Gamingitem-MM";
+    if (data.count > 0) {
+      document.title = `(${data.count}) ${baseTitle}`;
+    } else {
+      document.title = baseTitle;
+    }
+    if (data.count > prevCount.current && data.latestMessage) {
+      setToast(data.latestMessage);
+      const t = setTimeout(() => setToast(null), 5000);
+      return () => clearTimeout(t);
+    }
+    prevCount.current = data.count;
+  }, [data]);
+
+  return { unreadCount: data?.count ?? 0, toast, dismissToast: () => setToast(null) };
+}
+
+function ChatToast({ message, onDismiss }: { message: string | null; onDismiss: () => void }) {
+  if (!message) return null;
+  return (
+    <div className="fixed left-1/2 top-4 z-[100] w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 animate-in fade-in slide-in-from-top-4">
+      <Link
+        href="/help"
+        onClick={onDismiss}
+        className="flex items-center gap-3 rounded-2xl border border-primary/40 bg-gradient-to-r from-violet-600 to-blue-600 px-4 py-3 shadow-2xl shadow-primary/40"
+      >
+        <span className="text-xl shrink-0">💬</span>
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-extrabold text-white">Admin စာပို့လိုက်ပါပြီ</div>
+          <div className="truncate text-[11px] text-white/80">{message}</div>
+        </div>
+      </Link>
+    </div>
+  );
+}
+
 function StoreFooter() {
   const { data } = trpc.site.settings.useQuery();
   const brandName = data?.brandName || "ShineAker";
@@ -92,9 +141,11 @@ export default function StoreLayout({ children }: { children: ReactNode }) {
   const { t } = useLang();
   const { user, isAuthenticated, logout } = useAuth();
   const [location] = useLocation();
+  const { unreadCount, toast, dismissToast } = useChatNotifications();
 
   return (
     <div className="min-h-screen flex flex-col">
+      <ChatToast message={toast} onDismiss={dismissToast} />
       {/* Top bar */}
       <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-xl">
         <div className="mx-auto flex h-14 items-center justify-between px-4">
@@ -133,7 +184,7 @@ export default function StoreLayout({ children }: { children: ReactNode }) {
               { href: "/rank-boost", emoji: "🏆", label: "Boost" },
               { href: "/game-accounts", emoji: "💼", label: "Acc" },
               { href: "/?cat=premium", emoji: "✨", label: "Premium" },
-              { href: "/help", emoji: "🏥", label: "Help" },
+              { href: "/help", emoji: "💬", label: "Chat" },
             ].map(item => {
               const isActive = typeof window !== "undefined" && (window.location.pathname + window.location.search) === item.href;
               return (
@@ -141,7 +192,14 @@ export default function StoreLayout({ children }: { children: ReactNode }) {
                   className={["flex flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-1 text-[9px] font-bold transition-all",
                     isActive ? "bg-gradient-to-b from-primary/20 to-primary/5 text-primary" : "text-muted-foreground hover:text-foreground",
                   ].join(" ")}>
-                  <span className="text-base leading-none">{item.emoji}</span>
+                  <span className="relative text-base leading-none">
+                    {item.emoji}
+                    {item.href === "/help" && unreadCount > 0 && (
+                      <span className="absolute -right-2 -top-1.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-red-500 px-0.5 text-[8px] font-bold text-white ring-2 ring-background">
+                        {unreadCount}
+                      </span>
+                    )}
+                  </span>
                   <span>{item.label}</span>
                 </a>
               );
@@ -155,14 +213,21 @@ export default function StoreLayout({ children }: { children: ReactNode }) {
               { href: "/rank-boost", label: "🏆 Rank Boost" },
               { href: "/game-accounts", label: "💼 Game Acc" },
               { href: "/?cat=premium", label: "✨ Premium" },
-              { href: "/help", label: "🏥 Help" },
+              { href: "/help", label: "💬 Chat" },
             ].map(item => (
               <a key={item.href} href={item.href}
-                className={["flex shrink-0 items-center rounded-xl px-4 py-2 text-sm font-bold transition-all md:px-6 md:text-base",
+                className={["relative flex shrink-0 items-center rounded-xl px-4 py-2 text-sm font-bold transition-all md:px-6 md:text-base",
                   (typeof window !== "undefined" && (window.location.pathname + window.location.search) === item.href)
                     ? "bg-gradient-to-r from-primary to-accent text-white shadow-md"
                     : "text-muted-foreground hover:bg-accent/15 hover:text-foreground",
-                ].join(" ")}>{item.label}</a>
+                ].join(" ")}>
+                {item.label}
+                {item.href === "/help" && unreadCount > 0 && (
+                  <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white ring-2 ring-background">
+                    {unreadCount}
+                  </span>
+                )}
+              </a>
             ))}
           </div>
         </div>
@@ -189,7 +254,14 @@ export default function StoreLayout({ children }: { children: ReactNode }) {
                   active ? "text-primary" : "text-muted-foreground",
                 )}
               >
-                <Icon className={cn("size-5", active && "drop-shadow-[0_0_6px_oklch(0.7_0.22_350)]")} />
+                <span className="relative">
+                  <Icon className={cn("size-5", active && "drop-shadow-[0_0_6px_oklch(0.7_0.22_350)]")} />
+                  {item.path === "/help" && unreadCount > 0 && (
+                    <span className="absolute -right-1.5 -top-1.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-red-500 px-0.5 text-[8px] font-bold text-white ring-2 ring-background">
+                      {unreadCount}
+                    </span>
+                  )}
+                </span>
                 {t(item.key)}
               </Link>
             );

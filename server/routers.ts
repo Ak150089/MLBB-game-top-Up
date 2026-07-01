@@ -401,6 +401,8 @@ WW: Region Exploration 7,000 Ks / Events 4,000-8,000 Ks`,
     adminClear: adminProcedure
       .input(z.object({ userId: z.number().int() }))
       .mutation(async ({ input }) => { await db.deleteSupportMessages(input.userId); return { success: true }; }),
+    notifications: protectedProcedure.query(({ ctx }) => db.getUnreadSupportInfo(ctx.user.id)),
+    markRead: protectedProcedure.mutation(async ({ ctx }) => { await db.markSupportRead(ctx.user.id); return { success: true }; }),
   }),
 
   review: router({
@@ -525,13 +527,14 @@ WW: Region Exploration 7,000 Ks / Events 4,000-8,000 Ks`,
         rank: z.string().max(80).optional(),
         loginMethod: z.string().max(200).optional(),
         accountDetails: z.string().max(2000).optional(),
-        screenshotUrl: z.string().max(500).optional(),
+        screenshotUrl: z.string().optional(),
+        skinImageUrls: z.string().optional(),
         sellerPriceKs: z.number().int().min(1000),
       }))
       .mutation(async ({ ctx, input }) => {
         const buyPrice = Math.floor(input.sellerPriceKs * 0.8);
         const sellPrice = Math.floor(buyPrice * 1.2);
-        const res = await db.createGameAccountListing({ ...input, userId: ctx.user.id, adminBuyPriceKs: buyPrice, adminSellPriceKs: sellPrice, uid: input.uid ?? null, ign: input.ign ?? null, rank: input.rank ?? null, loginMethod: input.loginMethod ?? null, accountDetails: input.accountDetails ?? null, screenshotUrl: input.screenshotUrl ?? null });
+        const res = await db.createGameAccountListing({ ...input, userId: ctx.user.id, adminBuyPriceKs: buyPrice, adminSellPriceKs: sellPrice, uid: input.uid ?? null, ign: input.ign ?? null, rank: input.rank ?? null, loginMethod: input.loginMethod ?? null, accountDetails: input.accountDetails ?? null, screenshotUrl: input.screenshotUrl ?? null, skinImageUrls: input.skinImageUrls ?? null });
         notifyOwner({ title: "💼 New Account Listing!", content: `${ctx.user.name} — ${input.gameType} | Rank: ${input.rank ?? "?"} | Asking: ${input.sellerPriceKs.toLocaleString()} Ks | Admin buys: ${buyPrice.toLocaleString()} Ks` }).catch(() => {});
         return { success: true, id: res.id };
       }),
@@ -550,6 +553,46 @@ WW: Region Exploration 7,000 Ks / Events 4,000-8,000 Ks`,
         await db.updateGameAccountListing(id, data as any);
         return { success: true };
       }),
+    buy: protectedProcedure
+      .input(z.object({
+        listingId: z.number().int(),
+        paymentMethod: z.string(),
+        contact: z.string().optional(),
+        receiptUrl: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const listing = await db.getGameAccountListing(input.listingId);
+        if (!listing) throw new TRPCError({ code: "NOT_FOUND", message: "Listing မတွေ့" });
+        if (listing.status !== "listed") throw new TRPCError({ code: "BAD_REQUEST", message: "Account ရရှိနိုင်မည်မဟုတ်" });
+        const order = await db.createOrder({
+          userId: ctx.user.id,
+          productId: 1,
+          packageId: 0,
+          productName: `Game Acc: ${listing.gameType} — ${listing.ign ?? ""}`,
+          packageLabel: `${listing.gameType} Account`,
+          totalPriceKs: listing.adminSellPriceKs,
+          gameUserId: input.contact ?? null,
+          paymentMethod: input.paymentMethod,
+          receiptKey: null,
+          receiptUrl: input.receiptUrl ?? null,
+          status: input.paymentMethod === "balance" ? "processing" : "pending",
+        });
+        if (input.paymentMethod === "balance") {
+          const bal = await db.getUserBalance(ctx.user.id);
+          if (bal < listing.adminSellPriceKs) throw new TRPCError({ code: "BAD_REQUEST", message: "Balance မလုံ" });
+          await db.adjustBalance(ctx.user.id, -listing.adminSellPriceKs, "topup", `Game Acc: ${listing.ign}`, order.id);
+          if (listing.adminCredentials) {
+            await db.setOrderStatus(order.id, "completed", listing.adminCredentials);
+            await db.updateGameAccountListing(input.listingId, { status: "sold" } as any);
+          }
+        }
+        notifyOwner({ title: "💼 Acc ဝယ်မည်!", content: `${ctx.user.name} → ${listing.gameType} ${listing.ign} | ${listing.adminSellPriceKs.toLocaleString()} Ks | ${input.paymentMethod}` }).catch(()=>{});
+        return { success: true, orderId: order.id, autoDelivered: input.paymentMethod === "balance" && !!listing.adminCredentials };
+      }),
+    listPublic: publicProcedure.query(async () => {
+      const all = await db.listGameAccountListings();
+      return (all as any[]).filter((l: any) => l.status === "listed");
+    }),
   }),
 
   googleReview: router({
@@ -766,6 +809,14 @@ WW: Region Exploration 7,000 Ks / Events 4,000-8,000 Ks`,
   }),
 
   /* ----------------------------- Site settings (public read) ----------------------------- */
+  upload: router({
+    image: protectedProcedure
+      .input(z.object({ dataUrl: z.string(), folder: z.string().default("uploads") }))
+      .mutation(async ({ input }) => {
+        const uploaded = await uploadDataUrl(input.dataUrl, input.folder);
+        return { url: uploaded.url };
+      }),
+  }),
   site: router({
     settings: publicProcedure.query(() => db.getSiteSettings()),
     banners: publicProcedure.query(() => db.listHeroBanners(true)),

@@ -785,12 +785,31 @@ export async function addSupportMessage(userId: number, role: "user" | "assistan
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
   const [res] = await db.insert(supportMessages).values({ userId, role, content }).$returningId();
+  if (role === "admin") {
+    await db.execute(sql`UPDATE supportMessages SET isRead = 0 WHERE id = ${res.id}`);
+  }
   return res;
+}
+export async function getUnreadSupportInfo(userId: number) {
+  const db = await getDb();
+  if (!db) return { count: 0, latestMessage: null as string | null };
+  const countResult = await db.execute(sql`SELECT COUNT(*) as cnt FROM supportMessages WHERE userId = ${userId} AND role = 'admin' AND isRead = 0`);
+  const countRows = countResult[0] as any[];
+  const count = Number(countRows[0]?.cnt ?? 0);
+  const msgResult = await db.execute(sql`SELECT content FROM supportMessages WHERE userId = ${userId} AND role = 'admin' AND isRead = 0 ORDER BY createdAt DESC LIMIT 1`);
+  const msgRows = msgResult[0] as any[];
+  const latestMessage = msgRows[0]?.content ?? null;
+  return { count, latestMessage };
+}
+export async function markSupportRead(userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.execute(sql`UPDATE supportMessages SET isRead = 1 WHERE userId = ${userId} AND role = 'admin'`);
 }
 export async function getAllSupportConversations() {
   const db = await getDb();
   if (!db) return [];
-  const rows = await db.execute(sql`SELECT sm.userId, u.name, u.email, (SELECT content FROM supportMessages WHERE userId = sm.userId ORDER BY createdAt DESC LIMIT 1) as lastMsg, (SELECT role FROM supportMessages WHERE userId = sm.userId ORDER BY createdAt DESC LIMIT 1) as lastRole, (SELECT createdAt FROM supportMessages WHERE userId = sm.userId ORDER BY createdAt DESC LIMIT 1) as lastAt, COUNT(*) as msgCount FROM supportMessages sm JOIN users u ON u.id = sm.userId GROUP BY sm.userId, u.name, u.email ORDER BY lastAt DESC`);
+  const rows = await db.execute(sql`SELECT sm.userId, u.name as userName, u.email as userEmail, (SELECT content FROM supportMessages WHERE userId = sm.userId ORDER BY createdAt DESC LIMIT 1) as lastMessage, (SELECT role FROM supportMessages WHERE userId = sm.userId ORDER BY createdAt DESC LIMIT 1) as lastRole, (SELECT createdAt FROM supportMessages WHERE userId = sm.userId ORDER BY createdAt DESC LIMIT 1) as lastAt, COUNT(*) as msgCount FROM supportMessages sm JOIN users u ON u.id = sm.userId GROUP BY sm.userId, u.name, u.email ORDER BY lastAt DESC`);
   return rows[0] as any[];
 }
 export async function deleteSupportMessages(userId: number) {

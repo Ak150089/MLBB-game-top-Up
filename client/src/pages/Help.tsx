@@ -48,6 +48,13 @@ export default function Help() {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const { data: messages, refetch } = trpc.support.myMessages.useQuery(undefined, { enabled: isAuthenticated && mode !== "select", refetchInterval: mode === "admin" ? 5000 : false });
+  const markRead = trpc.support.markRead.useMutation();
+
+  useEffect(() => {
+    if (isAuthenticated && mode === "admin") {
+      markRead.mutate();
+    }
+  }, [mode, isAuthenticated]);
   const sendMut = trpc.support.send.useMutation({ onSuccess: () => { refetch(); setInput(""); } });
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
