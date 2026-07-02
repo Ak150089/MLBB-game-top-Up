@@ -234,6 +234,39 @@ export const appRouter = router({
 
         return { id: res.id };
       }),
+    autoVerifyReceipt: protectedProcedure
+      .input(z.object({ orderId: z.number().int() }))
+      .mutation(async ({ ctx, input }) => {
+        const order = await db.getOrderById(input.orderId);
+        if (!order || order.userId !== ctx.user.id) throw new TRPCError({ code: "NOT_FOUND", message: "Order မတွေ့" });
+        if (order.status === "completed") return { verified: true, reason: "Already completed" };
+        if (!order.receiptUrl) throw new TRPCError({ code: "BAD_REQUEST", message: "Receipt မတင်ရသေး" });
+        const label = (order.packageLabel ?? "").toLowerCase();
+        const isTelegram = label.includes("star") || label.includes("premium");
+        if (!isTelegram) throw new TRPCError({ code: "BAD_REQUEST", message: "Telegram order အတွက်သာ" });
+        const accounts = await db.getPaymentAccounts();
+        const ourPhones = (accounts as any[]).filter(a => ["kbzpay","wavepay","ayapay"].includes(a.method)).map((a: any) => a.accountNumber);
+        const result = await verifyReceipt(order.receiptUrl, order.totalPriceKs, ourPhones);
+        if (!result.verified) {
+          if (result.isFakeDetected) notifyOwner({ title: "Fake Receipt!", content: `Order #${order.id}` }).catch(()=>{});
+          return { verified: false, reason: result.reason };
+        }
+        const username = order.gameUserId ?? "";
+        let deliverResult: any = null;
+        if (label.includes("premium")) {
+          const months = label.includes("12") ? 12 : label.includes("6") ? 6 : 3;
+          deliverResult = await istarBuyPremium(username, months as 3|6|12);
+        } else {
+          const qty = parseInt(label.replace(/[^0-9]/g, "")) || 50;
+          deliverResult = await istarBuyStars(username, qty);
+        }
+        if (deliverResult?.order_id) {
+          await db.setOrderStatus(order.id, "completed", `iStar: ${deliverResult.order_id}`);
+          notifyOwner({ title: "Auto-delivered!", content: `${order.packageLabel} -> ${username}` }).catch(()=>{});
+          return { verified: true, reason: "Auto-delivered!" };
+        }
+        return { verified: true, reason: result.reason };
+      }),
   }),
 
   promo: router({

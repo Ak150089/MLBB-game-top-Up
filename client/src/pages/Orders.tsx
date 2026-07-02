@@ -68,6 +68,7 @@ export default function Orders() {
   const { data: orders, isLoading } = trpc.orders.myOrders.useQuery(undefined, {
     enabled: isAuthenticated,
   });
+  const verifyMut = trpc.orders.autoVerifyReceipt.useMutation({ onSuccess: (res: any) => { res.verified ? toast.success(res.reason) : toast.error(res.reason); }, onError: (e: any) => toast.error(e.message) });
 
   if (!loading && !isAuthenticated) {
     return (

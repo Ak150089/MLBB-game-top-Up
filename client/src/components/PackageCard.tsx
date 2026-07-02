@@ -46,6 +46,10 @@ function getEmoji(label: string): string {
   return "💎";
 }
 
+function stripEmoji(label: string): string {
+  return label.replace(/[^\w\s\-().,: ]/g, "").trim();
+}
+
 interface Props {
   pkg: Package;
   active: boolean;
@@ -122,13 +126,13 @@ export default function PackageCard({ pkg, active, onClick }: Props) {
         active ? "bg-primary/15" : "bg-card group-hover:bg-primary/[0.06]",
       )}>
         <span className="line-clamp-1 text-left text-[11px] font-bold text-foreground">
-          {pkg.label}
+          {stripEmoji(pkg.label ?? "")}
         </span>
         <span className={cn(
           "text-left text-xs font-extrabold",
           active ? "text-primary" : "text-primary/90",
         )}>
-          {formatKs(pkg.priceKs)}
+          {formatKs(pkg.priceKs ?? 0)}
         </span>
       </div>
     </button>
