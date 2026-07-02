@@ -4,10 +4,10 @@ import StoreLayout from "@/components/StoreLayout";
 import { useState } from "react";
 import { Star, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getLoginUrl } from "@/const";
 import { formatKs, useLang } from "@/contexts/LanguageContext";
+import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { PackageOpen, Receipt } from "lucide-react";
 
@@ -131,6 +131,27 @@ export default function Orders() {
                 <p className="mt-2 rounded-lg bg-background/50 px-2.5 py-1.5 text-xs text-muted-foreground">
                   {o.adminNote}
                 </p>
+              )}
+              {/* Auto-verify receipt button for pending KBZ/Wave Telegram orders */}
+              {o.status === "pending" &&
+               ["kbzpay","wavepay","ayapay"].includes((o as any).paymentMethod) &&
+               ((o.packageLabel ?? "").toLowerCase().includes("star") || (o.packageLabel ?? "").toLowerCase().includes("premium")) && (
+                <div className="mt-3 space-y-2 border-t border-border pt-3">
+                  {(o as any).receiptUrl ? (
+                    <Button
+                      size="sm"
+                      className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 font-bold"
+                      disabled={verifyMut.isPending}
+                      onClick={() => verifyMut.mutate({ orderId: o.id })}
+                    >
+                      {verifyMut.isPending ? "စစ်နေသည်..." : "🔍 Receipt စစ်ပြီး Auto-Deliver"}
+                    </Button>
+                  ) : (
+                    <p className="text-center text-xs text-amber-400">
+                      ⚠️ Receipt မတင်ရသေး — Order form မှ တင်ပါ
+                    </p>
+                  )}
+                </div>
               )}
               {(o as any).deliveredCredentials && (
                 <div className="mt-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3">

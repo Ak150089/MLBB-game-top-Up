@@ -6,9 +6,17 @@ import type { Package } from "@shared/types";
 
 const MLBB_BASE = "https://shineaker-uploads.sgp1.digitaloceanspaces.com/mlbb";
 const PUBG_BASE = "https://shineaker-uploads.sgp1.digitaloceanspaces.com/pubg";
+const TG_BASE = "https://shineaker-uploads.sgp1.digitaloceanspaces.com/telegram";
 
 function getImage(label: string): string | null {
   const l = label.toLowerCase();
+  // Telegram Premium
+  if (l.includes("premium") && l.includes("12")) return `${TG_BASE}/premium-12m.webp`;
+  if (l.includes("premium") && l.includes("6"))  return `${TG_BASE}/premium-6m.webp`;
+  if (l.includes("premium") && l.includes("3"))  return `${TG_BASE}/premium-3m.webp`;
+  if (l.includes("premium")) return `${TG_BASE}/premium-3m.webp`;
+  // Telegram Stars
+  if (l.includes("star")) return `${TG_BASE}/stars.webp`;
   if (l.includes("uc")) {
     const amt = parseInt(label.replace(/[^0-9]/g, "")) || 0;
     if (amt >= 1320) return `${PUBG_BASE}/large.webp`;

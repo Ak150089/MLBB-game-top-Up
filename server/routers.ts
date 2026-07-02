@@ -7,6 +7,7 @@ import { systemRouter } from "./_core/systemRouter";
 import { adminProcedure, protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { ksToTon } from "./_core/priceConversion";
 import { verifyTonPaymentByMemo } from "./_core/tonPayment";
+import { verifyReceipt } from "./_core/receiptOcr";
 import { istarBuyPremium, istarBuyStars, istarGetBalance } from "./_core/telegramPremium";
 import * as db from "./db";
 import { storagePut } from "./storage";
