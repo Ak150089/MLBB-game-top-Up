@@ -749,6 +749,35 @@ WW: Region Exploration 7,000 Ks / Events 4,000-8,000 Ks`,
         }
         await db.completeDeposit(dep.id, result.hash, "Auto-verified via TonAPI");
         const balanceKs = await db.getUserBalance(ctx.user.id);
+        // Auto-deliver pending Telegram orders if balance is now enough
+        try {
+          const pendingOrders = await db.getUserOrders(ctx.user.id);
+          for (const order of pendingOrders) {
+            if (order.status !== "pending") continue;
+            const label = (order.packageLabel ?? "").toLowerCase();
+            const isTelegram = label.includes("star") || label.includes("premium");
+            if (!isTelegram) continue;
+            if (balanceKs < (order.totalPriceKs ?? 0)) continue;
+            // Deduct balance
+            await db.adjustBalance(ctx.user.id, -(order.totalPriceKs ?? 0), "topup", `Auto-deliver: ${order.packageLabel}`, order.id);
+            // Deliver
+            const username = order.gameUserId ?? "";
+            let deliverResult: any = null;
+            if (label.includes("premium")) {
+              const months = label.includes("12") ? 12 : label.includes("6") ? 6 : 3;
+              deliverResult = await istarBuyPremium(username, months as 3|6|12);
+            } else if (label.includes("star")) {
+              const qty = parseInt(label.replace(/[^0-9]/g, "")) || 50;
+              deliverResult = await istarBuyStars(username, qty);
+            }
+            if (deliverResult?.order_id) {
+              await db.setOrderStatus(order.id, "completed", `iStar order: ${deliverResult.order_id}`);
+              notifyOwner({ title: "✅ Auto-delivered!", content: `${order.packageLabel} → ${username} | iStar: ${deliverResult.order_id}` }).catch(() => {});
+            }
+          }
+        } catch (e: any) {
+          console.error("Auto-deliver error:", e?.message);
+        }
         return { verified: true, balanceKs };
       }),
   }),
