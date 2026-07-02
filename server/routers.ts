@@ -817,6 +817,54 @@ WW: Region Exploration 7,000 Ks / Events 4,000-8,000 Ks`,
         return { url: uploaded.url };
       }),
   }),
+  uid: router({
+    checkUid: publicProcedure
+      .input(z.object({
+        gameType: z.string(),
+        uid: z.string().min(1),
+        serverId: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { gameType, uid, serverId } = input;
+        const g = gameType.toLowerCase();
+        try {
+          if (g.includes("legend") || g === "mlbb") {
+            if (!serverId) return { success: false, name: null, message: "Server ID လိုအပ်သည်" };
+            const res = await fetch("https://api.isan.eu.org/nickname/ml", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ id: uid, server: serverId }),
+            });
+            const data = await res.json() as any;
+            if (data.success) return { success: true, name: data.name as string, message: null };
+            return { success: false, name: null, message: "UID / Server ID မမှန်ကန်" };
+          }
+          if (g.includes("pubg") || g === "pubg") {
+            const res = await fetch("https://api.isan.eu.org/nickname/pubgm", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ id: uid }),
+            });
+            const data = await res.json() as any;
+            if (data.success) return { success: true, name: data.name as string, message: null };
+            return { success: false, name: null, message: "UID မမှန်ကန်" };
+          }
+          if (g.includes("free fire") || g === "freefire") {
+            const res = await fetch("https://api.isan.eu.org/nickname/ff", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ id: uid }),
+            });
+            const data = await res.json() as any;
+            if (data.success) return { success: true, name: data.name as string, message: null };
+            return { success: false, name: null, message: "UID မမှန်ကန်" };
+          }
+          return { success: false, name: null, message: "Game ဒီ feature မပံ့ပိုး" };
+        } catch {
+          return { success: false, name: null, message: "Server error" };
+        }
+      }),
+  }),
   site: router({
     settings: publicProcedure.query(() => db.getSiteSettings()),
     banners: publicProcedure.query(() => db.listHeroBanners(true)),

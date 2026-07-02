@@ -1,3 +1,4 @@
+import UidChecker from "@/components/UidChecker";
 import { useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import StoreLayout from "@/components/StoreLayout";
@@ -309,8 +310,16 @@ export default function RankBoost() {
 
                 {/* Game info */}
                 <div className="grid grid-cols-2 gap-3">
-                  <div><Label className="text-xs">UID</Label><Input className="mt-1" placeholder="123456789" value={form.uid} onChange={e => setForm(f=>({...f,uid:e.target.value}))} /></div>
-                  <div><Label className="text-xs">Server ID</Label><Input className="mt-1" placeholder="12345" value={form.serverId} onChange={e => setForm(f=>({...f,serverId:e.target.value}))} /></div>
+                  <div className="col-span-2">
+                    <UidChecker
+                      gameType={selectedGame.id}
+                      uid={form.uid}
+                      serverId={form.serverId}
+                      onUidChange={v => setForm(f=>({...f,uid:v}))}
+                      onServerIdChange={v => setForm(f=>({...f,serverId:v}))}
+                      onNameFound={() => {}}
+                    />
+                  </div>
                 </div>
 
                 {/* Rank selection */}
@@ -390,7 +399,16 @@ export default function RankBoost() {
                 <h3 className="font-bold">📋 Progression Service Details</h3>
 
                 <div className="grid grid-cols-2 gap-3">
-                  <div><Label className="text-xs">UID</Label><Input className="mt-1" placeholder="123456789" value={form.uid} onChange={e => setForm(f=>({...f,uid:e.target.value}))} /></div>
+                  <div className="col-span-2">
+                    <UidChecker
+                      gameType={selectedGame.id}
+                      uid={form.uid}
+                      serverId={form.serverId}
+                      onUidChange={v => setForm(f=>({...f,uid:v}))}
+                      onServerIdChange={v => setForm(f=>({...f,serverId:v}))}
+                      onNameFound={() => {}}
+                    />
+                  </div>
                   <div>
                     <Label className="text-xs">Server</Label>
                     <select className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm" value={form.serverId} onChange={e => setForm(f=>({...f,serverId:e.target.value}))}>

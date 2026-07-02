@@ -16,7 +16,8 @@ function getImage(label: string): string | null {
     return `${PUBG_BASE}/small.webp`;
   }
   if (l.includes("twilight")) return `${MLBB_BASE}/twilight.webp`;
-  if (l.includes("weekly") || l.includes("pass")) return `${MLBB_BASE}/weekly.webp`;
+  if (l.includes("lukas") || l.includes("magic chess") || l.includes("chess")) return `${MLBB_BASE}/lukas.webp`;
+  if (l.includes("weekly") || l.includes("14 day") || l.includes("pass")) return `${MLBB_BASE}/weekly.webp`;
   if (l.includes("diamond")) {
     const amt = parseInt(label.replace(/[^0-9]/g, "")) || 0;
     if (amt >= 5000) return `${MLBB_BASE}/bank.webp`;

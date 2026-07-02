@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { formatKs } from "@/contexts/LanguageContext";
 import UserImageUpload from "@/components/UserImageUpload";
+import UidChecker from "@/components/UidChecker";
 import { X, Star } from "lucide-react";
 
 const GAMES = [
@@ -269,7 +270,7 @@ function AccCard({ acc, onClick }: { acc: any; onClick: () => void }) {
 function SellForm() {
   const { isAuthenticated } = useAuth();
   const [step, setStep] = useState(0);
-  const [game, setGame] = useState("");
+  const [selectedGame, setSelectedGame] = useState("");
   const [profileUrl, setProfileUrl] = useState<string | null>(null);
   const [skinUrls, setSkinUrls] = useState<string[]>([]);
   const [form, setForm] = useState({ ign:"", uid:"", rank:"", loginMethod:"", accountDetails:"", sellerPriceKs:"" });
@@ -292,7 +293,7 @@ function SellForm() {
       <div className="text-5xl">🎉</div>
       <div className="font-black text-lg text-white">Submit ပြီးပါပြီ!</div>
       <p className="text-sm text-muted-foreground">Admin စစ်ဆေးပြီး ကိုယ်ကိုဆက်သွယ်ပါမည်</p>
-      <Button variant="outline" onClick={() => { setSubmitted(false); setStep(0); setGame(""); setForm({ ign:"",uid:"",rank:"",loginMethod:"",accountDetails:"",sellerPriceKs:"" }); }}>
+      <Button variant="outline" onClick={() => { setSubmitted(false); setStep(0); setSelectedGame(""); setForm({ ign:"",uid:"",rank:"",loginMethod:"",accountDetails:"",sellerPriceKs:"" }); }}>
         ထပ်တင်မည်
       </Button>
     </div>
@@ -312,14 +313,14 @@ function SellForm() {
           <div className="font-bold text-white">🎮 Game ရွေးပါ</div>
           <div className="grid grid-cols-2 gap-2">
             {GAMES.map(g => (
-              <button key={g.id} onClick={() => setGame(g.id)}
+              <button key={g.id} onClick={() => setSelectedGame(g.id)}
                 className={cn("flex items-center gap-2 rounded-2xl border p-3.5 text-sm font-bold transition-all",
-                  game === g.id ? "border-violet-500 bg-violet-500/15 text-violet-300" : "border-border text-muted-foreground hover:border-violet-400/40")}>
+                  selectedGame === g.id ? "border-violet-500 bg-violet-500/15 text-violet-300" : "border-border text-muted-foreground hover:border-violet-400/40")}>
                 <span className="text-lg">{g.emoji}</span><span>{g.label}</span>
               </button>
             ))}
           </div>
-          <Button className="w-full bg-gradient-to-r from-violet-600 to-blue-600 font-black" disabled={!game} onClick={() => setStep(1)}>
+          <Button className="w-full bg-gradient-to-r from-violet-600 to-blue-600 font-black" disabled={!selectedGame} onClick={() => setStep(1)}>
             ဆက်လုပ်မည် →
           </Button>
         </div>
@@ -328,7 +329,15 @@ function SellForm() {
       {step === 1 && (
         <div className="space-y-3">
           <div className="font-bold text-white">📋 Account Info</div>
-          {[["IGN","In-game name","ign"],["UID","Player ID","uid"],["Rank","Mythic / Conqueror","rank"],["Login Method","Moonton / Google / Facebook","loginMethod"]].map(([label,ph,key]) => (
+          <UidChecker
+            gameType={GAMES.find(g=>g.id===selectedGame)?.label ?? selectedGame}
+            uid={form.uid}
+            serverId={(form as any).serverId ?? ""}
+            onUidChange={v => setForm(f=>({...f,uid:v}))}
+            onServerIdChange={v => setForm(f=>({...f,serverId:v} as any))}
+            onNameFound={v => setForm(f=>({...f,ign:v}))}
+          />
+          {[["Rank","Mythic / Conqueror","rank"],["Login Method","Moonton / Google / Facebook","loginMethod"]].map(([label,ph,key]) => (
             <div key={key}>
               <Label className="text-xs">{label}</Label>
               <Input className="mt-1" placeholder={ph} value={(form as any)[key]} onChange={e => setForm(f => ({...f,[key]:e.target.value}))} />
@@ -402,7 +411,7 @@ function SellForm() {
             <Button className="flex-[2] bg-gradient-to-r from-violet-600 to-blue-600 font-black"
               disabled={!form.sellerPriceKs || createMut.isPending}
               onClick={() => createMut.mutate({
-                gameType: GAMES.find(g=>g.id===game)?.label ?? game,
+                gameType: GAMES.find(g=>g.id===selectedGame)?.label ?? selectedGame,
                 ign: form.ign || undefined,
                 uid: form.uid || undefined,
                 rank: form.rank || undefined,

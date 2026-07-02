@@ -11,6 +11,7 @@ import { trpc } from "@/lib/trpc";
 import type { Package } from "@shared/types";
 import { ArrowLeft, Check, Copy, ImageUp, Loader2, Wallet } from "lucide-react";
 import PackageGrid from "@/components/PackageGrid";
+import UidChecker from "@/components/UidChecker";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Link, useLocation, useRoute } from "wouter";
@@ -65,6 +66,9 @@ export default function ProductDetail() {
   const balanceKs = balanceData?.balanceKs ?? 0;
 
   const [selected, setSelected] = useState<Package | null>(null);
+  const [uid, setUid] = useState("");
+  const [serverId, setServerId] = useState("");
+  const [playerName, setPlayerName] = useState("");
   const orderFormRef = useRef<HTMLDivElement>(null);
   const [gameUserId, setGameUserId] = useState("");
   const [gameServerId, setGameServerId] = useState("");
@@ -215,18 +219,27 @@ export default function ProductDetail() {
                 ? "📧 Email / Username"
                 : t("product.gameUserId")}
             </Label>
-            <Input
-              value={gameUserId}
-              onChange={e => setGameUserId(e.target.value)}
-              placeholder={
-                product.category === "premium"
-                  ? "@username သို့မဟုတ် +959xxxxxxx"
-                  : product.category === "social"
-                  ? "email@example.com"
-                  : "123456789"
-              }
-              className="bg-background/50"
-            />
+            {product.category !== "premium" && product.category !== "social" ? (
+              <UidChecker
+                gameType={product.slug ?? product.name ?? "game"}
+                uid={gameUserId}
+                serverId={gameServerId}
+                onUidChange={setGameUserId}
+                onServerIdChange={setGameServerId}
+                onNameFound={() => {}}
+              />
+            ) : (
+              <Input
+                value={gameUserId}
+                onChange={e => setGameUserId(e.target.value)}
+                placeholder={
+                  product.category === "premium"
+                    ? "@username သို့မဟုတ် +959xxxxxxx"
+                    : "email@example.com"
+                }
+                className="bg-background/50"
+              />
+            )}
             {product.category === "premium" && (
               <p className="text-[11px] text-muted-foreground">
                 ⚠️ Telegram username သို့မဟုတ် phone number ထည့်ပါ (account login မလို)
